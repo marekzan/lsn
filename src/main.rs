@@ -4,9 +4,11 @@ mod ui;
 
 use app::{App, Sort};
 use color_eyre::Result;
+use log::info;
 use node::{Node, NodeKind};
 
 fn flatten_tree_for_list(root_node: &Node, sort: &Sort) -> Vec<String> {
+    info!("flatten tree for list");
     let mut list_items = Vec::new();
     build_list_recursive(root_node, &mut list_items, 0, sort);
     list_items
@@ -50,11 +52,31 @@ fn build_list_recursive(node: &Node, list: &mut Vec<String>, depth: usize, sort:
 }
 
 fn main() -> Result<()> {
+    #[cfg(debug_assertions)]
+    init_debug_logger();
+
     color_eyre::install()?;
+
     let terminal = ratatui::init_with_options(ratatui::TerminalOptions {
         viewport: ratatui::Viewport::Inline(50),
     });
     let app_result = App::new().unwrap().run(terminal);
     ratatui::restore();
     app_result
+}
+
+fn init_debug_logger() {
+    use simplelog::{Config, WriteLogger};
+    use std::fs::File;
+
+    log_panics::init();
+
+    WriteLogger::init(
+        log::LevelFilter::Debug,
+        Config::default(),
+        File::create("debug.log").unwrap(),
+    )
+    .unwrap();
+
+    info!("debug logger initialized")
 }
