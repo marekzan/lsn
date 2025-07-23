@@ -35,7 +35,7 @@ impl App {
         let block = Block::bordered().fg(Color::Green).title(binding);
 
         // Iterate through all elements in the `items` and stylize them.
-        let flattened_list = flatten_tree_for_list(&self.content, &self.sort);
+        let flattened_list = flatten_tree_for_list(&self.content, &self.filter);
 
         let items: Vec<ListItem> = flattened_list
             .iter()

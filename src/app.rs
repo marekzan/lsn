@@ -17,22 +17,39 @@ pub enum Sort {
     Alphabetical,
 }
 
+#[derive(Default)]
+pub struct Filter {
+    pub directories: bool,
+    pub files: bool,
+    pub dotfiles: bool,
+}
+
+#[derive(Default)]
+pub enum InputMode {
+    #[default]
+    Normal,
+    FilterKey,
+}
+
 pub(crate) struct App {
     should_exit: bool,
     pub content: Node,
     pub state: ListState,
     pub sort: Sort,
+    pub filter: Filter,
+    pub input_mode: InputMode,
 }
 
 impl App {
     pub fn new() -> Result<Self> {
-        /* let current_path */
         let content = Node::new(Path::new("."))?;
         let mut app = Self {
             content,
             should_exit: false,
             state: ListState::default(),
             sort: Sort::default(),
+            filter: Filter::default(),
+            input_mode: InputMode::default(),
         };
         app.state.select(Some(1));
         Ok(app)
@@ -52,7 +69,7 @@ impl App {
         if let Some(selected_index) = self.state.selected() {
             let child_path = self
                 .content
-                .get_node_by_index(selected_index, &self.sort)
+                .get_node_by_index(selected_index)
                 .map(|node| node.path.clone());
 
             if let Some(child_path) = child_path
@@ -62,7 +79,7 @@ impl App {
             {
                 *is_open = false;
 
-                let new_list = flatten_tree_for_list(&self.content, &self.sort);
+                let new_list = flatten_tree_for_list(&self.content, &self.filter);
                 let parent_new_index = new_list.iter().position(|line| {
                     let name = parent_path
                         .file_name()
@@ -80,11 +97,11 @@ impl App {
 
     fn toggle_folder(&mut self) {
         if let Some(selected_index) = self.state.selected()
-            && let Some(node) = self.content.get_node_by_index(selected_index, &self.sort)
+            && let Some(node) = self.content.get_node_by_index(selected_index)
             && let NodeKind::Directory { is_open, children } = &mut node.kind
         {
             if children.is_none() {
-                let entries = match read_dir(&node.path) {
+                let mut entries = match read_dir(&node.path) {
                     Ok(entries) => entries
                         .filter_map(|entry| entry.ok())
                         .filter_map(|entry| Node::new(&entry.path()).ok())
@@ -92,6 +109,7 @@ impl App {
                         .collect(),
                     Err(_) => vec![],
                 };
+                sort_children(&mut entries, &self.sort);
                 *children = Some(entries);
             }
 
@@ -99,21 +117,62 @@ impl App {
         }
     }
 
+    fn toggle_directory_filter(&mut self) {
+        self.filter.directories = !self.filter.directories;
+    }
+
+    fn toggle_file_filter(&mut self) {
+        self.filter.files = !self.filter.files;
+    }
+
+    fn toggle_dotfile_filter(&mut self) {
+        self.filter.dotfiles = !self.filter.dotfiles;
+    }
+
     fn handle_key(&mut self, key: KeyEvent) {
         if key.kind != KeyEventKind::Press {
             return;
         }
-        match key.code {
-            KeyCode::Char('q') | KeyCode::Esc => self.should_exit = true,
-            KeyCode::Char('h') | KeyCode::Left => self.close_parent(),
-            KeyCode::Char('j') | KeyCode::Down => self.state.select_next(),
-            KeyCode::Char('k') | KeyCode::Up => self.state.select_previous(),
-            KeyCode::Char('g') | KeyCode::Home => self.state.select_first(),
-            KeyCode::Char('G') | KeyCode::End => self.state.select_last(),
-            KeyCode::Char('l') | KeyCode::Right | KeyCode::Enter => {
-                self.toggle_folder();
+
+        match self.input_mode {
+            InputMode::Normal => match key.code {
+                KeyCode::Char('q') | KeyCode::Esc => self.should_exit = true,
+                KeyCode::Char('h') => self.close_parent(),
+                KeyCode::Char('j') => self.state.select_next(),
+                KeyCode::Char('k') => self.state.select_previous(),
+                KeyCode::Char('g') => self.state.select_first(),
+                KeyCode::Char('G') => self.state.select_last(),
+                KeyCode::Char('l') | KeyCode::Right | KeyCode::Enter => {
+                    self.toggle_folder();
+                }
+                KeyCode::Char('f') => self.input_mode = InputMode::FilterKey,
+                _ => {}
+            },
+            InputMode::FilterKey => {
+                match key.code {
+                    KeyCode::Char('d') => self.toggle_directory_filter(),
+                    KeyCode::Char('f') => self.toggle_file_filter(),
+                    KeyCode::Char('.') => self.toggle_dotfile_filter(),
+                    _ => {}
+                }
+                self.input_mode = InputMode::Normal;
             }
-            _ => {}
         }
     }
+}
+
+fn sort_children(children: &mut Vec<Box<Node>>, sort: &Sort) {
+    children.sort_by(|a, b| match sort {
+        Sort::Directory => {
+            let a_is_dir = matches!(a.kind, NodeKind::Directory { .. });
+            let b_is_dir = matches!(b.kind, NodeKind::Directory { .. });
+            b_is_dir.cmp(&a_is_dir).then_with(|| a.path.cmp(&b.path))
+        }
+        Sort::File => {
+            let a_is_dir = matches!(a.kind, NodeKind::Directory { .. });
+            let b_is_dir = matches!(b.kind, NodeKind::Directory { .. });
+            a_is_dir.cmp(&b_is_dir).then_with(|| a.path.cmp(&b.path))
+        }
+        Sort::Alphabetical => a.path.cmp(&b.path),
+    });
 }

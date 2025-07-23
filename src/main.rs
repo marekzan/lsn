@@ -2,19 +2,18 @@ mod app;
 mod node;
 mod ui;
 
-use app::{App, Sort};
+use app::{App, Filter};
 use color_eyre::Result;
 use log::info;
 use node::{Node, NodeKind};
 
-fn flatten_tree_for_list(root_node: &Node, sort: &Sort) -> Vec<String> {
-    info!("flatten tree for list");
+fn flatten_tree_for_list(root_node: &Node, filter: &Filter) -> Vec<String> {
     let mut list_items = Vec::new();
-    build_list_recursive(root_node, &mut list_items, 0, sort);
+    build_list_recursive(root_node, &mut list_items, 0, filter);
     list_items
 }
 
-fn build_list_recursive(node: &Node, list: &mut Vec<String>, depth: usize, sort: &Sort) {
+fn build_list_recursive(node: &Node, list: &mut Vec<String>, depth: usize, filter: &Filter) {
     let indent = "  ".repeat(depth);
     let prefix = if let NodeKind::Directory { is_open, .. } = &node.kind {
         if *is_open { "\u{f115} " } else { "\u{e5ff} " }
@@ -28,24 +27,33 @@ fn build_list_recursive(node: &Node, list: &mut Vec<String>, depth: usize, sort:
         && let Some(children) = children
     {
         if *is_open {
-            let mut sorted_children = children.iter().collect::<Vec<_>>();
+            for child in children {
+                let mut should_display = true;
 
-            sorted_children.sort_by(|a, b| match sort {
-                Sort::Directory => {
-                    let a_is_dir = matches!(a.kind, NodeKind::Directory { .. });
-                    let b_is_dir = matches!(b.kind, NodeKind::Directory { .. });
-                    b_is_dir.cmp(&a_is_dir).then_with(|| a.path.cmp(&b.path))
-                }
-                Sort::File => {
-                    let a_is_dir = matches!(a.kind, NodeKind::Directory { .. });
-                    let b_is_dir = matches!(b.kind, NodeKind::Directory { .. });
-                    a_is_dir.cmp(&b_is_dir).then_with(|| a.path.cmp(&b.path))
-                }
-                Sort::Alphabetical => a.path.cmp(&b.path),
-            });
+                match child.kind {
+                    NodeKind::Directory { is_open, .. } => {
+                        if filter.directories && !is_open {
+                            should_display = false;
+                        }
+                    }
+                    NodeKind::File => {
+                        if filter.files {
+                            should_display = false;
+                        }
 
-            for child in sorted_children {
-                build_list_recursive(child, list, depth + 1, sort);
+                        if filter.dotfiles {
+                            if let Some(name) = child.path.file_name().and_then(|s| s.to_str()) {
+                                if name.starts_with('.') {
+                                    should_display = false;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if should_display {
+                    build_list_recursive(child, list, depth + 1, filter);
+                }
             }
         }
     }
