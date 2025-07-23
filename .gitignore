@@ -1,1 +1,6 @@
-/target
+/target/
+/config-online.json
+integrations.txt
+/config-offline.json
+/.env
+*.local*
