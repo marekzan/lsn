@@ -1,13 +1,14 @@
 use std::{fs::read_dir, path::Path};
 
 use color_eyre::Result;
+use log::info;
 use ratatui::{
     DefaultTerminal,
     crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind},
     widgets::ListState,
 };
 
-use crate::{Node, flatten_tree_for_list, node::NodeKind};
+use crate::{Node, node::NodeKind, ui::flatten_tree_for_list};
 
 #[derive(Default)]
 pub enum Sort {
@@ -38,11 +39,12 @@ pub(crate) struct App {
     pub sort: Sort,
     pub filter: Filter,
     pub input_mode: InputMode,
+    pub list_view: Vec<String>,
 }
 
 impl App {
-    pub fn new() -> Result<Self> {
-        let content = Node::new(Path::new("."))?;
+    pub fn new() -> Self {
+        let content = Node::new(Path::new("."));
         let mut app = Self {
             content,
             should_exit: false,
@@ -50,19 +52,28 @@ impl App {
             sort: Sort::default(),
             filter: Filter::default(),
             input_mode: InputMode::default(),
+            list_view: vec![],
         };
         app.state.select(Some(1));
-        Ok(app)
+        app
     }
 
-    pub fn run(mut self, mut terminal: DefaultTerminal) -> Result<()> {
+    pub fn run(mut self, terminal: &mut DefaultTerminal) -> Result<()> {
+        self.update_list_view();
         while !self.should_exit {
             terminal.draw(|frame| frame.render_widget(&mut self, frame.area()))?;
+            info!("draw");
             if let Event::Key(key) = event::read()? {
                 self.handle_key(key);
             };
         }
         Ok(())
+    }
+
+    fn update_list_view(&mut self) {
+        let flattened_list = flatten_tree_for_list(&self.content, &self.filter);
+
+        self.list_view = flattened_list.clone();
     }
 
     fn close_parent(&mut self) {
@@ -92,6 +103,7 @@ impl App {
                     self.state.select(Some(index))
                 }
             }
+            self.update_list_view();
         }
     }
 
@@ -104,7 +116,7 @@ impl App {
                 let mut entries = match read_dir(&node.path) {
                     Ok(entries) => entries
                         .filter_map(|entry| entry.ok())
-                        .filter_map(|entry| Node::new(&entry.path()).ok())
+                        .filter_map(|entry| Some(Node::new(&entry.path())))
                         .map(Box::new)
                         .collect(),
                     Err(_) => vec![],
@@ -114,19 +126,23 @@ impl App {
             }
 
             *is_open = !*is_open;
+            self.update_list_view();
         }
     }
 
     fn toggle_directory_filter(&mut self) {
         self.filter.directories = !self.filter.directories;
+        self.update_list_view();
     }
 
     fn toggle_file_filter(&mut self) {
         self.filter.files = !self.filter.files;
+        self.update_list_view();
     }
 
     fn toggle_dotfile_filter(&mut self) {
         self.filter.dotfiles = !self.filter.dotfiles;
+        self.update_list_view();
     }
 
     fn handle_key(&mut self, key: KeyEvent) {

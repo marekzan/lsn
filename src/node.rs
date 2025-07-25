@@ -1,4 +1,3 @@
-use color_eyre::Result;
 use std::path::{Path, PathBuf};
 
 pub(crate) struct Node {
@@ -15,7 +14,7 @@ pub(crate) enum NodeKind {
 }
 
 impl Node {
-    pub fn new(path: &Path) -> Result<Self> {
+    pub fn new(path: &Path) -> Self {
         let path_buf = path.to_path_buf();
         let kind = if path.is_dir() {
             NodeKind::Directory {
@@ -25,10 +24,10 @@ impl Node {
         } else {
             NodeKind::File
         };
-        Ok(Node {
+        Node {
             path: path_buf,
             kind,
-        })
+        }
     }
 
     /// Finds a node by its index in the flattened list and returns a mutable reference.
