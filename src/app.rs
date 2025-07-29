@@ -1,5 +1,3 @@
-use std::{fs::read_dir, path::Path};
-
 use color_eyre::Result;
 use log::info;
 use ratatui::{
@@ -7,8 +5,12 @@ use ratatui::{
     crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind},
     widgets::ListState,
 };
+use std::{
+    fs::read_dir,
+    path::{Path, PathBuf},
+};
 
-use crate::{Node, node::NodeKind, ui::flatten_tree_for_list};
+use crate::{Node, node::NodeKind};
 
 #[derive(Default)]
 pub enum Sort {
@@ -39,12 +41,12 @@ pub(crate) struct App {
     pub sort: Sort,
     pub filter: Filter,
     pub input_mode: InputMode,
-    pub list_view: Vec<String>,
+    pub view_items: Vec<PathBuf>,
 }
 
 impl App {
     pub fn new() -> Self {
-        let content = Node::new(Path::new("."));
+        let content = Node::new(Path::new("."), 0);
         let mut app = Self {
             content,
             should_exit: false,
@@ -52,14 +54,16 @@ impl App {
             sort: Sort::default(),
             filter: Filter::default(),
             input_mode: InputMode::default(),
-            list_view: vec![],
+            view_items: vec![],
         };
-        app.state.select(Some(1));
+        app.state.select(Some(0));
         app
     }
 
     pub fn run(mut self, terminal: &mut DefaultTerminal) -> Result<()> {
-        self.update_list_view();
+        // Initiales Laden der View-Items
+        self.update_view_items();
+
         while !self.should_exit {
             terminal.draw(|frame| frame.render_widget(&mut self, frame.area()))?;
             info!("draw");
@@ -70,79 +74,78 @@ impl App {
         Ok(())
     }
 
-    fn update_list_view(&mut self) {
-        let flattened_list = flatten_tree_for_list(&self.content, &self.filter);
+    /// NEU: Diese Funktion aktualisiert die logische Liste der sichtbaren Elemente.
+    /// Sie wird nur aufgerufen, wenn sich der Zustand ändert (z.B. Ordner öffnen).
+    fn update_view_items(&mut self) {
+        info!("Updating view items");
+        self.view_items = flatten_tree_for_view(&self.content, &self.filter);
+    }
 
-        self.list_view = flattened_list.clone();
+    /// Holt sich den Pfad des aktuell ausgewählten Elements.
+    fn get_selected_path(&self) -> Option<&PathBuf> {
+        self.state.selected().and_then(|i| self.view_items.get(i))
     }
 
     fn close_parent(&mut self) {
-        if let Some(selected_index) = self.state.selected() {
-            let child_path = self
-                .content
-                .get_node_by_index(selected_index)
-                .map(|node| node.path.clone());
+        if let Some(child_path) = self.get_selected_path().cloned() {
+            if let Some(parent_path) = child_path.parent() {
+                if parent_path.as_os_str().is_empty() {
+                    return; // Verhindert das Schließen des Wurzelverzeichnisses
+                }
 
-            if let Some(child_path) = child_path
-                && let Some(parent_path) = child_path.parent()
-                && let Some(parent_node) = self.content.find_node_by_path(parent_path)
-                && let NodeKind::Directory { is_open, .. } = &mut parent_node.kind
-            {
-                *is_open = false;
+                // Den Elternknoten im Baum finden und schließen
+                if let Some(parent_node) = self.content.find_node_by_path_mut(parent_path) {
+                    if let NodeKind::Directory { is_open, .. } = &mut parent_node.kind {
+                        *is_open = false;
+                    }
+                }
 
-                let new_list = flatten_tree_for_list(&self.content, &self.filter);
-                let parent_new_index = new_list.iter().position(|line| {
-                    let name = parent_path
-                        .file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy();
-                    line.contains(name.as_ref())
-                });
-
-                if let Some(index) = parent_new_index {
-                    self.state.select(Some(index))
+                // View aktualisieren und Auswahl auf den Elternteil setzen
+                self.update_view_items();
+                if let Some(parent_index) = self.view_items.iter().position(|p| p == parent_path) {
+                    self.state.select(Some(parent_index));
                 }
             }
-            self.update_list_view();
         }
     }
 
     fn toggle_folder(&mut self) {
-        if let Some(selected_index) = self.state.selected()
-            && let Some(node) = self.content.get_node_by_index(selected_index)
-            && let NodeKind::Directory { is_open, children } = &mut node.kind
-        {
-            if children.is_none() {
-                let mut entries = match read_dir(&node.path) {
-                    Ok(entries) => entries
-                        .filter_map(|entry| entry.ok())
-                        .filter_map(|entry| Some(Node::new(&entry.path())))
-                        .map(Box::new)
-                        .collect(),
-                    Err(_) => vec![],
-                };
-                sort_children(&mut entries, &self.sort);
-                *children = Some(entries);
-            }
+        if let Some(selected_path) = self.get_selected_path().cloned() {
+            if let Some(node) = self.content.find_node_by_path_mut(&selected_path) {
+                if let NodeKind::Directory { is_open, children } = &mut node.kind {
+                    // Kinder laden, falls noch nicht geschehen
+                    if children.is_none() {
+                        let mut entries = match read_dir(&node.path) {
+                            Ok(entries) => entries
+                                .filter_map(Result::ok)
+                                .map(|entry| Box::new(Node::new(&entry.path(), node.depth + 1)))
+                                .collect(),
+                            Err(_) => vec![],
+                        };
+                        sort_children(&mut entries, &self.sort);
+                        *children = Some(entries);
+                    }
 
-            *is_open = !*is_open;
-            self.update_list_view();
+                    *is_open = !*is_open;
+                    self.update_view_items();
+                }
+            }
         }
     }
 
     fn toggle_directory_filter(&mut self) {
         self.filter.directories = !self.filter.directories;
-        self.update_list_view();
+        self.update_view_items();
     }
 
     fn toggle_file_filter(&mut self) {
         self.filter.files = !self.filter.files;
-        self.update_list_view();
+        self.update_view_items();
     }
 
     fn toggle_dotfile_filter(&mut self) {
         self.filter.dotfiles = !self.filter.dotfiles;
-        self.update_list_view();
+        self.update_view_items();
     }
 
     fn handle_key(&mut self, key: KeyEvent) {
@@ -153,9 +156,9 @@ impl App {
         match self.input_mode {
             InputMode::Normal => match key.code {
                 KeyCode::Char('q') | KeyCode::Esc => self.should_exit = true,
-                KeyCode::Char('h') => self.close_parent(),
-                KeyCode::Char('j') => self.state.select_next(),
-                KeyCode::Char('k') => self.state.select_previous(),
+                KeyCode::Char('h') | KeyCode::Left => self.close_parent(),
+                KeyCode::Char('j') | KeyCode::Down => self.state.select_next(),
+                KeyCode::Char('k') | KeyCode::Up => self.state.select_previous(),
                 KeyCode::Char('g') => self.state.select_first(),
                 KeyCode::Char('G') => self.state.select_last(),
                 KeyCode::Char('l') | KeyCode::Right | KeyCode::Enter => {
@@ -172,6 +175,44 @@ impl App {
                     _ => {}
                 }
                 self.input_mode = InputMode::Normal;
+            }
+        }
+    }
+}
+
+/// NEU: Diese Funktion durchläuft den Baum und erstellt eine flache Liste von Pfaden.
+fn flatten_tree_for_view(root_node: &Node, filter: &Filter) -> Vec<PathBuf> {
+    let mut view_items = Vec::new();
+    build_view_recursive(root_node, &mut view_items, filter);
+    view_items
+}
+
+fn build_view_recursive(node: &Node, view_items: &mut Vec<PathBuf>, filter: &Filter) {
+    view_items.push(node.path.clone());
+
+    if let NodeKind::Directory { children, is_open } = &node.kind {
+        if *is_open {
+            if let Some(children) = children {
+                for child in children {
+                    // Filterlogik anwenden
+                    let mut should_display = true;
+                    let file_name_str =
+                        child.path.file_name().unwrap_or_default().to_string_lossy();
+
+                    if filter.dotfiles && file_name_str.starts_with('.') {
+                        should_display = false;
+                    }
+                    if filter.files && matches!(child.kind, NodeKind::File) {
+                        should_display = false;
+                    }
+                    if filter.directories && matches!(child.kind, NodeKind::Directory { .. }) {
+                        should_display = false;
+                    }
+
+                    if should_display {
+                        build_view_recursive(child, view_items, filter);
+                    }
+                }
             }
         }
     }

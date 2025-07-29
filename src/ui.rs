@@ -1,111 +1,76 @@
-use log::info;
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Layout, Rect},
-    style::{Color, Modifier, Style, Stylize, palette::tailwind::SLATE},
-    text::ToSpan,
+    style::{Color, Modifier, Style, Stylize},
+    text::{Line, Span},
     widgets::{Block, HighlightSpacing, List, ListItem, Paragraph, StatefulWidget, Widget},
 };
 
-use crate::{
-    Node, NodeKind,
-    app::{App, Filter},
-};
+use crate::{app::App, node::NodeKind};
 
-const SELECTED_STYLE: Style = Style::new().bg(SLATE.c800).add_modifier(Modifier::BOLD);
+const SELECTED_STYLE: Style = Style::new()
+    .bg(Color::Rgb(50, 50, 50))
+    .add_modifier(Modifier::BOLD);
 
 impl Widget for &mut App {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let [main_area, footer_area] =
             Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).areas(area);
 
-        let [list_area] = Layout::vertical([Constraint::Fill(1)]).areas(main_area);
-
         App::render_footer(footer_area, buf);
-        self.render_list(list_area, buf);
+        self.render_list(main_area, buf);
     }
 }
 
-/// Rendering logic for the app
 impl App {
     fn render_footer(area: Rect, buf: &mut Buffer) {
-        Paragraph::new("Use ↓↑ to move, ← to unselect, → to change status, g/G to go top/bottom.")
+        Paragraph::new("↓↑: move | ←→/Enter: open/close | g/G: top/bottom | f: filter | q: quit")
             .centered()
             .render(area, buf);
     }
 
+    /// NEU: rendert die Liste "on the fly" aus `app.view_items`.
     fn render_list(&mut self, area: Rect, buf: &mut Buffer) {
-        let title = "Filesystem".to_span().into_left_aligned_line();
-        let block = Block::bordered().fg(Color::White).title(title);
+        let title = Line::from(" lsn ".bold()).left_aligned();
+        let block = Block::bordered().title(title);
 
+        // Die ListItems werden jetzt bei jedem Frame neu generiert.
+        // Das ist der Kern des "Immediate Mode"-Prinzips.
         let items: Vec<ListItem> = self
-            .list_view
+            .view_items
             .iter()
-            .map(|item| ListItem::new(item.as_str()))
+            .map(|path| {
+                // Finde den Knoten im Baum, um an seine Details zu kommen (Tiefe, Typ etc.)
+                let node = self.content.find_node_by_path(path).unwrap(); // Sollte immer gefunden werden
+
+                let indent = "  ".repeat(node.depth);
+
+                let prefix = match &node.kind {
+                    NodeKind::Directory { is_open, .. } => {
+                        if *is_open { " " } else { " " } // Folder open/closed icons
+                    }
+                    NodeKind::File => " ", // File icon
+                };
+
+                let name = node.path.file_name().unwrap_or_default().to_string_lossy();
+
+                // Erstelle das formatierte ListItem
+                let line = Line::from(vec![
+                    Span::raw(indent),
+                    Span::styled(prefix, Style::default().fg(Color::Cyan)),
+                    Span::raw(name),
+                ]);
+                ListItem::new(line)
+            })
             .collect();
 
-        // Create a List from all list items and highlight the currently selected one
+        // Der Rest bleibt gleich...
         let list = List::new(items)
             .block(block)
             .highlight_style(SELECTED_STYLE)
-            .highlight_symbol(">")
+            .highlight_symbol(">> ")
             .highlight_spacing(HighlightSpacing::Always);
 
-        // We need to disambiguate this trait method as both `Widget` and `StatefulWidget` share the
-        // same method name `render`.
         StatefulWidget::render(list, area, buf, &mut self.state);
-    }
-}
-
-pub fn flatten_tree_for_list(root_node: &Node, filter: &Filter) -> Vec<String> {
-    info!("flattening list for view");
-    let mut list_items = Vec::new();
-    build_list_recursive(root_node, &mut list_items, 0, filter);
-    list_items
-}
-
-fn build_list_recursive(node: &Node, list: &mut Vec<String>, depth: usize, filter: &Filter) {
-    let indent = "  ".repeat(depth);
-    let prefix = if let NodeKind::Directory { is_open, .. } = &node.kind {
-        if *is_open { "\u{f115} " } else { "\u{e5ff} " }
-    } else {
-        "\u{f01a7} "
-    };
-    let name = node.path.file_name().unwrap_or_default().to_string_lossy();
-    list.push(format!("{}{}{}", indent, prefix, name));
-
-    if let NodeKind::Directory { children, is_open } = &node.kind
-        && let Some(children) = children
-    {
-        if *is_open {
-            for child in children {
-                let mut should_display = true;
-
-                match child.kind {
-                    NodeKind::Directory { is_open, .. } => {
-                        if filter.directories && !is_open {
-                            should_display = false;
-                        }
-                    }
-                    NodeKind::File => {
-                        if filter.files {
-                            should_display = false;
-                        }
-
-                        if filter.dotfiles {
-                            if let Some(name) = child.path.file_name().and_then(|s| s.to_str()) {
-                                if name.starts_with('.') {
-                                    should_display = false;
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if should_display {
-                    build_list_recursive(child, list, depth + 1, filter);
-                }
-            }
-        }
     }
 }

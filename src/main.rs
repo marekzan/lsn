@@ -7,7 +7,7 @@ use std::io;
 use app::App;
 use color_eyre::Result;
 use log::info;
-use node::{Node, NodeKind};
+use node::Node;
 use ratatui::crossterm::{
     cursor::{MoveUp, Show},
     execute,
