@@ -36,7 +36,7 @@ impl App {
 
     fn render_list(&mut self, area: Rect, buf: &mut Buffer) {
         let title = "Filesystem".to_span().into_left_aligned_line();
-        let block = Block::bordered().fg(Color::Green).title(title);
+        let block = Block::bordered().fg(Color::White).title(title);
 
         let items: Vec<ListItem> = self
             .list_view
