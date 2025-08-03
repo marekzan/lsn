@@ -28,19 +28,14 @@ fn main() -> Result<()> {
 
     terminal.clear()?;
 
-    let app_result = App::new().run(&mut terminal);
-    // ratatui::restore();
+    let app_result = App::new()?.run(&mut terminal);
     terminal.clear()?;
 
-    // 1. Disable raw mode to restore normal keyboard input
     disable_raw_mode()?;
 
-    // 2. Execute commands to clean up the terminal
     execute!(
         io::stdout(),
-        // Make the cursor visible again
         Show,
-        // Clear the entire screen
         MoveUp(tui_height),
         Clear(ClearType::FromCursorDown)
     )?;

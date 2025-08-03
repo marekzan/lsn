@@ -1,13 +1,13 @@
 use std::path::{Path, PathBuf};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct Node {
     pub path: PathBuf,
     pub kind: NodeKind,
-    pub depth: usize, // NEU: Tiefe für die Einrückung direkt speichern
+    pub depth: usize,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) enum NodeKind {
     Directory {
         children: Option<Vec<Box<Node>>>,
@@ -34,8 +34,6 @@ impl Node {
         }
     }
 
-    /// Findet einen Knoten anhand seines Pfades und gibt eine veränderbare Referenz zurück.
-    /// Dies ist die neue primäre Methode, um auf Knoten zuzugreifen.
     pub(crate) fn find_node_by_path_mut(&mut self, target_path: &Path) -> Option<&mut Node> {
         if self.path == target_path {
             return Some(self);
@@ -53,7 +51,6 @@ impl Node {
         None
     }
 
-    /// Findet einen Knoten anhand seines Pfades und gibt eine unveränderliche Referenz zurück.
     pub(crate) fn find_node_by_path(&self, target_path: &Path) -> Option<&Node> {
         if self.path == target_path {
             return Some(self);

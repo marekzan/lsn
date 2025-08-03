@@ -29,46 +29,43 @@ impl App {
             .render(area, buf);
     }
 
-    /// NEU: rendert die Liste "on the fly" aus `app.view_items`.
     fn render_list(&mut self, area: Rect, buf: &mut Buffer) {
         let title = Line::from(" lsn ".bold()).left_aligned();
         let block = Block::bordered().title(title);
 
-        // Die ListItems werden jetzt bei jedem Frame neu generiert.
-        // Das ist der Kern des "Immediate Mode"-Prinzips.
         let items: Vec<ListItem> = self
-            .view_items
+            .ui_representation
             .iter()
             .map(|path| {
-                // Finde den Knoten im Baum, um an seine Details zu kommen (Tiefe, Typ etc.)
-                let node = self.content.find_node_by_path(path).unwrap(); // Sollte immer gefunden werden
-
+                let node = self.tree_representation.find_node_by_path(path).unwrap();
                 let indent = "  ".repeat(node.depth);
 
                 let prefix = match &node.kind {
                     NodeKind::Directory { is_open, .. } => {
-                        if *is_open { " " } else { " " } // Folder open/closed icons
+                        if *is_open {
+                            " "
+                        } else {
+                            " "
+                        }
                     }
-                    NodeKind::File => " ", // File icon
+                    NodeKind::File => " ",
                 };
 
                 let name = node.path.file_name().unwrap_or_default().to_string_lossy();
 
-                // Erstelle das formatierte ListItem
                 let line = Line::from(vec![
                     Span::raw(indent),
-                    Span::styled(prefix, Style::default().fg(Color::Cyan)),
+                    Span::styled(prefix, Style::default().fg(Color::Blue)),
                     Span::raw(name),
                 ]);
                 ListItem::new(line)
             })
             .collect();
 
-        // Der Rest bleibt gleich...
         let list = List::new(items)
             .block(block)
             .highlight_style(SELECTED_STYLE)
-            .highlight_symbol(">> ")
+            .highlight_symbol(">  ")
             .highlight_spacing(HighlightSpacing::Always);
 
         StatefulWidget::render(list, area, buf, &mut self.state);
