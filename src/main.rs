@@ -28,8 +28,7 @@ fn main() -> Result<()> {
 
     terminal.clear()?;
 
-    let app_result = App::new().run(&mut terminal);
-    // ratatui::restore();
+    let app_result = App::new()?.run(&mut terminal); // ratatui::restore();
     terminal.clear()?;
 
     // 1. Disable raw mode to restore normal keyboard input

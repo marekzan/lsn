@@ -37,11 +37,11 @@ impl App {
         // Die ListItems werden jetzt bei jedem Frame neu generiert.
         // Das ist der Kern des "Immediate Mode"-Prinzips.
         let items: Vec<ListItem> = self
-            .view_items
+            .ui_representation
             .iter()
             .map(|path| {
                 // Finde den Knoten im Baum, um an seine Details zu kommen (Tiefe, Typ etc.)
-                let node = self.content.find_node_by_path(path).unwrap(); // Sollte immer gefunden werden
+                let node = self.tree_representation.find_node_by_path(path).unwrap(); // Sollte immer gefunden werden
 
                 let indent = "  ".repeat(node.depth);
 
@@ -57,7 +57,7 @@ impl App {
                 // Erstelle das formatierte ListItem
                 let line = Line::from(vec![
                     Span::raw(indent),
-                    Span::styled(prefix, Style::default().fg(Color::Cyan)),
+                    Span::styled(prefix, Style::default().fg(Color::Blue)),
                     Span::raw(name),
                 ]);
                 ListItem::new(line)
@@ -68,7 +68,7 @@ impl App {
         let list = List::new(items)
             .block(block)
             .highlight_style(SELECTED_STYLE)
-            .highlight_symbol(">> ")
+            .highlight_symbol(">  ")
             .highlight_spacing(HighlightSpacing::Always);
 
         StatefulWidget::render(list, area, buf, &mut self.state);

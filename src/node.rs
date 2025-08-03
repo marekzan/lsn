@@ -1,13 +1,13 @@
 use std::path::{Path, PathBuf};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct Node {
     pub path: PathBuf,
     pub kind: NodeKind,
     pub depth: usize, // NEU: Tiefe für die Einrückung direkt speichern
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) enum NodeKind {
     Directory {
         children: Option<Vec<Box<Node>>>,
