@@ -12,7 +12,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::{Node, node::NodeKind};
+use crate::node::{FsNode, NodeKind, Tree};
 
 #[derive(Default, Debug)]
 pub(crate) enum Sort {
@@ -39,8 +39,8 @@ pub(crate) enum InputMode {
 #[derive(Debug)]
 pub(crate) struct App {
     should_exit: bool,
-    pub tree_representation: Node,
-    pub data_representation: HashMap<PathBuf, Node>,
+    pub tree: Tree<FsNode>,
+    pub path_to_id: HashMap<PathBuf, usize>,
     pub ui_representation: Vec<PathBuf>,
     pub state: ListState,
     pub sort: Sort,
@@ -51,10 +51,16 @@ pub(crate) struct App {
 impl App {
     pub(crate) fn new() -> Result<Self, Error> {
         let cwd = env::current_dir()?;
-        let content = Node::new(&cwd, 0);
+        let mut tree = Tree::new();
+        let mut lookup = HashMap::new();
+
+        let root_node_data = FsNode::new(&cwd, 0);
+        let root_id = tree.insert(root_node_data, None);
+        lookup.insert(cwd, root_id);
+
         let mut app = Self {
-            tree_representation: content.clone(),
-            data_representation: HashMap::new(),
+            tree,
+            path_to_id: lookup,
             ui_representation: vec![],
             should_exit: false,
             state: ListState::default(),
@@ -62,19 +68,19 @@ impl App {
             filter: Filter::default(),
             input_mode: InputMode::default(),
         };
-        app.data_representation.insert(cwd, content);
         app.state.select(Some(0));
         info!("{:?}", app);
         Ok(app)
     }
 
     pub fn run(mut self, terminal: &mut DefaultTerminal) -> Result<()> {
-        // initial open of parent folder and updating the view items
-        self.toggle_folder();
         self.update_view_items();
+        // Initially open the root folder to show its contents
+        self.toggle_folder();
 
         while !self.should_exit {
             terminal.draw(|frame| frame.render_widget(&mut self, frame.area()))?;
+            info!("drawing");
             if let Event::Key(key) = event::read()? {
                 self.handle_key(key);
             };
@@ -82,68 +88,117 @@ impl App {
         Ok(())
     }
 
-    /// NEU: Diese Funktion aktualisiert die logische Liste der sichtbaren Elemente.
-    /// Sie wird nur aufgerufen, wenn sich der Zustand ändert (z.B. Ordner öffnen).
     fn update_view_items(&mut self) {
         info!("Updating view items");
-        self.ui_representation = flatten_tree_for_view(&self.tree_representation, &self.filter);
+        self.ui_representation = flatten_tree_for_view(&self.tree, &self.filter);
     }
 
-    /// Holt sich den Pfad des aktuell ausgewählten Elements.
     fn get_selected_path(&self) -> Option<&PathBuf> {
         self.state
             .selected()
             .and_then(|i| self.ui_representation.get(i))
     }
 
+    /// Corrected function to avoid double mutable borrows.
     fn close_parent(&mut self) {
-        if let Some(child_path) = self.get_selected_path().cloned() {
-            if let Some(parent_path) = child_path.parent() {
-                if parent_path.as_os_str().is_empty() {
-                    return; // Verhindert das Schließen des Wurzelverzeichnisses
-                }
+        // --- Phase 1: Immutable Read ---
+        // Get all the info we need without holding onto long-lived borrows.
+        let parent_info = self.get_selected_path().and_then(|child_path| {
+            self.path_to_id.get(child_path).and_then(|&child_id| {
+                self.tree.get(child_id)?.parent.and_then(|parent_id| {
+                    let parent_path = self.tree.get(parent_id)?.data.path.clone();
+                    Some((parent_id, parent_path)) // Return the IDs and paths we need
+                })
+            })
+        });
 
-                // Den Elternknoten im Baum finden und schließen
-                if let Some(parent_node) =
-                    self.tree_representation.find_node_by_path_mut(parent_path)
-                {
-                    if let NodeKind::Directory { is_open, .. } = &mut parent_node.kind {
-                        *is_open = false;
-                    }
+        // --- Phase 2: Mutable Write ---
+        // The immutable borrows from Phase 1 are now dropped. We can safely borrow mutably.
+        if let Some((parent_id, parent_path)) = parent_info {
+            // Get the mutable reference to the parent node.
+            if let Some(parent_node) = self.tree.get_mut(parent_id) {
+                if let NodeKind::Directory { is_open, .. } = &mut parent_node.data.kind {
+                    *is_open = false;
                 }
+            } else {
+                return;
+            }
 
-                // View aktualisieren und Auswahl auf den Elternteil setzen
-                self.update_view_items();
-                if let Some(parent_index) =
-                    self.ui_representation.iter().position(|p| p == parent_path)
-                {
-                    self.state.select(Some(parent_index));
-                }
+            // Perform other mutable operations.
+            self.update_view_items();
+
+            // Find the new position and update the state.
+            if let Some(parent_index) = self
+                .ui_representation
+                .iter()
+                .position(|p| p == &parent_path)
+            {
+                self.state.select(Some(parent_index));
             }
         }
     }
 
+    /// Corrected function to avoid conflicting mutable borrows.
     fn toggle_folder(&mut self) {
-        if let Some(selected_path) = self.get_selected_path().cloned()
-            && let Some(node) = self
-                .tree_representation
-                .find_node_by_path_mut(&selected_path)
-        {
-            if let NodeKind::Directory { is_open, children } = &mut node.kind {
-                // Kinder laden, falls noch nicht geschehen
-                if children.is_none() {
-                    let mut entries = match read_dir(&node.path) {
-                        Ok(entries) => entries
-                            .filter_map(Result::ok)
-                            .map(|entry| Box::new(Node::new(&entry.path(), node.depth + 1)))
-                            .collect(),
-                        Err(_) => vec![],
-                    };
-                    sort_children(&mut entries, &self.sort);
-                    *children = Some(entries);
+        // --- Phase 1: Immutable read to get basic info ---
+        let selected_info = self
+            .get_selected_path()
+            .and_then(|p| self.path_to_id.get(p).map(|&id| (id, p.clone())));
+
+        if let Some((node_id, path)) = selected_info {
+            let mut needs_loading = false;
+            let mut is_directory = false;
+
+            // --- Phase 2: Check if children need loading in a small scope ---
+            if let Some(node) = self.tree.get(node_id) {
+                if let NodeKind::Directory {
+                    children_loaded, ..
+                } = node.data.kind
+                {
+                    is_directory = true;
+                    if !children_loaded {
+                        needs_loading = true;
+                    }
+                }
+            }
+
+            // --- Phase 3: Load children if needed (this part mutates the tree) ---
+            if needs_loading {
+                let parent_depth = self.tree.get(node_id).unwrap().data.depth;
+                let mut entries: Vec<(PathBuf, FsNode)> = match read_dir(&path) {
+                    Ok(entries) => entries
+                        .filter_map(Result::ok)
+                        .map(|entry| {
+                            let path = entry.path();
+                            (path.clone(), FsNode::new(&path, parent_depth + 1))
+                        })
+                        .collect(),
+                    Err(_) => vec![],
+                };
+                sort_children(&mut entries, &self.sort);
+
+                for (child_path, fs_node) in entries {
+                    let child_id = self.tree.insert(fs_node, Some(node_id));
+                    self.path_to_id.insert(child_path, child_id);
                 }
 
-                *is_open = !*is_open;
+                if let Some(node) = self.tree.get_mut(node_id) {
+                    if let NodeKind::Directory {
+                        children_loaded, ..
+                    } = &mut node.data.kind
+                    {
+                        *children_loaded = true;
+                    }
+                }
+            }
+
+            // --- Phase 4: Toggle open state and update UI ---
+            if is_directory {
+                if let Some(node) = self.tree.get_mut(node_id) {
+                    if let NodeKind::Directory { is_open, .. } = &mut node.data.kind {
+                        *is_open = !*is_open;
+                    }
+                }
                 self.update_view_items();
             }
         }
@@ -196,45 +251,59 @@ impl App {
     }
 }
 
-fn flatten_tree_for_view(root_node: &Node, filter: &Filter) -> Vec<PathBuf> {
+fn flatten_tree_for_view(tree: &Tree<FsNode>, filter: &Filter) -> Vec<PathBuf> {
     let mut view_items = Vec::new();
-    build_view_recursive(root_node, &mut view_items, filter);
+    if !tree.nodes.is_empty() {
+        build_view_recursive(tree, 0, &mut view_items, filter);
+    }
     view_items
 }
 
-fn build_view_recursive(node: &Node, view_items: &mut Vec<PathBuf>, filter: &Filter) {
-    view_items.push(node.path.clone());
+fn build_view_recursive(
+    tree: &Tree<FsNode>,
+    node_id: usize,
+    view_items: &mut Vec<PathBuf>,
+    filter: &Filter,
+) {
+    let node = tree.get(node_id).unwrap();
+    view_items.push(node.data.path.clone());
 
-    if let NodeKind::Directory { children, is_open } = &node.kind
-        && *is_open
-        && let Some(children) = children
-    {
-        for child in children {
-            // Filterlogik anwenden
-            let mut should_display = true;
-            let file_name = child.path.file_name().unwrap_or_default().to_string_lossy();
+    if let NodeKind::Directory { is_open, .. } = &node.data.kind {
+        if *is_open {
+            for &child_id in &node.children {
+                let child_node = tree.get(child_id).unwrap();
+                let mut should_display = true;
+                let file_name = child_node
+                    .data
+                    .path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy();
 
-            if filter.dotfiles && file_name.starts_with('.') {
-                should_display = false;
-            }
-            if filter.files && matches!(child.kind, NodeKind::File) {
-                should_display = false;
-            }
-            if filter.directories
-                && matches!(child.kind, NodeKind::Directory { is_open, .. } if is_open == false)
-            {
-                should_display = false;
-            }
+                if filter.dotfiles && file_name.starts_with('.') {
+                    should_display = false;
+                }
+                if filter.files && matches!(child_node.data.kind, NodeKind::File) {
+                    should_display = false;
+                }
+                if filter.directories {
+                    if let NodeKind::Directory { is_open, .. } = child_node.data.kind {
+                        if !is_open {
+                            should_display = false;
+                        }
+                    }
+                }
 
-            if should_display {
-                build_view_recursive(child, view_items, filter);
+                if should_display {
+                    build_view_recursive(tree, child_id, view_items, filter);
+                }
             }
         }
     }
 }
 
-fn sort_children(children: &mut Vec<Box<Node>>, sort: &Sort) {
-    children.sort_by(|a, b| match sort {
+fn sort_children(children: &mut Vec<(PathBuf, FsNode)>, sort: &Sort) {
+    children.sort_by(|(_, a), (_, b)| match sort {
         Sort::Directory => {
             let a_is_dir = matches!(a.kind, NodeKind::Directory { .. });
             let b_is_dir = matches!(b.kind, NodeKind::Directory { .. });

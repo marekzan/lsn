@@ -7,7 +7,6 @@ use std::io;
 use app::App;
 use color_eyre::Result;
 use log::info;
-use node::Node;
 use ratatui::crossterm::{
     cursor::{MoveUp, Show},
     execute,
@@ -28,21 +27,17 @@ fn main() -> Result<()> {
 
     terminal.clear()?;
 
-    let app_result = App::new()?.run(&mut terminal); // ratatui::restore();
-    terminal.clear()?;
+    let app_result = App::new()?.run(&mut terminal);
 
-    // 1. Disable raw mode to restore normal keyboard input
+    // Restore terminal
     disable_raw_mode()?;
-
-    // 2. Execute commands to clean up the terminal
     execute!(
         io::stdout(),
-        // Make the cursor visible again
         Show,
-        // Clear the entire screen
         MoveUp(tui_height),
         Clear(ClearType::FromCursorDown)
     )?;
+
     app_result
 }
 
