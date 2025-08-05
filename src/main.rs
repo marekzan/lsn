@@ -21,9 +21,11 @@ fn main() -> Result<()> {
 
     let tui_height = 50;
 
-    let mut terminal = ratatui::init_with_options(ratatui::TerminalOptions {
+    /* let mut terminal = ratatui::init_with_options(ratatui::TerminalOptions {
         viewport: ratatui::Viewport::Inline(tui_height),
-    });
+    }); */
+
+    let mut terminal = ratatui::init();
 
     terminal.clear()?;
 

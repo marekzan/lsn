@@ -5,12 +5,7 @@ use ratatui::{
     crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind},
     widgets::ListState,
 };
-use std::{
-    collections::HashMap,
-    env,
-    fs::read_dir,
-    path::{Path, PathBuf},
-};
+use std::{collections::HashMap, env, fs::read_dir, path::PathBuf};
 
 use crate::node::{FsNode, NodeKind, Tree};
 
@@ -101,21 +96,15 @@ impl App {
 
     /// Corrected function to avoid double mutable borrows.
     fn close_parent(&mut self) {
-        // --- Phase 1: Immutable Read ---
-        // Get all the info we need without holding onto long-lived borrows.
-        let parent_info = self.get_selected_path().and_then(|child_path| {
-            self.path_to_id.get(child_path).and_then(|&child_id| {
-                self.tree.get(child_id)?.parent.and_then(|parent_id| {
-                    let parent_path = self.tree.get(parent_id)?.data.path.clone();
-                    Some((parent_id, parent_path)) // Return the IDs and paths we need
-                })
-            })
-        });
+        // get parent info
+        let p_info = self
+            .get_selected_path()
+            .and_then(|node| node.parent())
+            .unwrap();
+        let p_index = self.path_to_id.get(p_info).unwrap();
+        let parent_info = Some((p_index.to_owned(), p_info.to_owned()));
 
-        // --- Phase 2: Mutable Write ---
-        // The immutable borrows from Phase 1 are now dropped. We can safely borrow mutably.
         if let Some((parent_id, parent_path)) = parent_info {
-            // Get the mutable reference to the parent node.
             if let Some(parent_node) = self.tree.get_mut(parent_id) {
                 if let NodeKind::Directory { is_open, .. } = &mut parent_node.data.kind {
                     *is_open = false;
