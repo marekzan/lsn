@@ -5,12 +5,7 @@ use ratatui::{
     crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind},
     widgets::ListState,
 };
-use std::{
-    collections::HashMap,
-    env,
-    fs::read_dir,
-    path::{Path, PathBuf},
-};
+use std::{collections::HashMap, env, fs::read_dir, path::PathBuf};
 
 use crate::node::{FsNode, NodeKind, Tree};
 
@@ -75,7 +70,6 @@ impl App {
 
     pub fn run(mut self, terminal: &mut DefaultTerminal) -> Result<()> {
         self.update_view_items();
-        // Initially open the root folder to show its contents
         self.toggle_folder();
 
         while !self.should_exit {
@@ -99,23 +93,15 @@ impl App {
             .and_then(|i| self.ui_representation.get(i))
     }
 
-    /// Corrected function to avoid double mutable borrows.
     fn close_parent(&mut self) {
-        // --- Phase 1: Immutable Read ---
-        // Get all the info we need without holding onto long-lived borrows.
-        let parent_info = self.get_selected_path().and_then(|child_path| {
-            self.path_to_id.get(child_path).and_then(|&child_id| {
-                self.tree.get(child_id)?.parent.and_then(|parent_id| {
-                    let parent_path = self.tree.get(parent_id)?.data.path.clone();
-                    Some((parent_id, parent_path)) // Return the IDs and paths we need
-                })
-            })
-        });
+        let p_info = self
+            .get_selected_path()
+            .and_then(|node| node.parent())
+            .unwrap();
+        let p_index = self.path_to_id.get(p_info).unwrap();
+        let parent_info = Some((p_index.to_owned(), p_info.to_owned()));
 
-        // --- Phase 2: Mutable Write ---
-        // The immutable borrows from Phase 1 are now dropped. We can safely borrow mutably.
         if let Some((parent_id, parent_path)) = parent_info {
-            // Get the mutable reference to the parent node.
             if let Some(parent_node) = self.tree.get_mut(parent_id) {
                 if let NodeKind::Directory { is_open, .. } = &mut parent_node.data.kind {
                     *is_open = false;
@@ -124,10 +110,8 @@ impl App {
                 return;
             }
 
-            // Perform other mutable operations.
             self.update_view_items();
 
-            // Find the new position and update the state.
             if let Some(parent_index) = self
                 .ui_representation
                 .iter()
@@ -137,10 +121,7 @@ impl App {
             }
         }
     }
-
-    /// Corrected function to avoid conflicting mutable borrows.
     fn toggle_folder(&mut self) {
-        // --- Phase 1: Immutable read to get basic info ---
         let selected_info = self
             .get_selected_path()
             .and_then(|p| self.path_to_id.get(p).map(|&id| (id, p.clone())));
@@ -149,7 +130,6 @@ impl App {
             let mut needs_loading = false;
             let mut is_directory = false;
 
-            // --- Phase 2: Check if children need loading in a small scope ---
             if let Some(node) = self.tree.get(node_id) {
                 if let NodeKind::Directory {
                     children_loaded, ..
@@ -162,7 +142,6 @@ impl App {
                 }
             }
 
-            // --- Phase 3: Load children if needed (this part mutates the tree) ---
             if needs_loading {
                 let parent_depth = self.tree.get(node_id).unwrap().data.depth;
                 let mut entries: Vec<(PathBuf, FsNode)> = match read_dir(&path) {
@@ -192,7 +171,6 @@ impl App {
                 }
             }
 
-            // --- Phase 4: Toggle open state and update UI ---
             if is_directory {
                 if let Some(node) = self.tree.get_mut(node_id) {
                     if let NodeKind::Directory { is_open, .. } = &mut node.data.kind {
