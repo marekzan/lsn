@@ -1,60 +1,98 @@
-mod app;
-mod node;
-mod ui;
-
-use std::io;
-
-use app::App;
 use color_eyre::Result;
-use log::info;
-use ratatui::crossterm::{
-    cursor::{MoveUp, Show},
-    execute,
-    terminal::{Clear, ClearType, disable_raw_mode},
+use crossterm::event::{
+    Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent,
+};
+use futures::{FutureExt, StreamExt};
+use ratatui::{
+    DefaultTerminal, Frame,
+    style::Stylize,
+    text::Line,
+    widgets::{Block, Paragraph},
 };
 
-fn main() -> Result<()> {
-    #[cfg(debug_assertions)]
-    init_debug_logger();
-
+#[tokio::main]
+async fn main() -> color_eyre::Result<()> {
     color_eyre::install()?;
-
-    let tui_height = 50;
-
-    /* let mut terminal = ratatui::init_with_options(ratatui::TerminalOptions {
-        viewport: ratatui::Viewport::Inline(tui_height),
-    }); */
-
-    let mut terminal = ratatui::init();
-
-    terminal.clear()?;
-
-    let app_result = App::new()?.run(&mut terminal);
-
-    // Restore terminal
-    disable_raw_mode()?;
-    execute!(
-        io::stdout(),
-        Show,
-        MoveUp(tui_height),
-        Clear(ClearType::FromCursorDown)
-    )?;
-
-    app_result
+    let terminal = ratatui::init();
+    let result = App::new().run(terminal).await;
+    ratatui::restore();
+    result
 }
 
-fn init_debug_logger() {
-    use simplelog::{Config, WriteLogger};
-    use std::fs::File;
+#[derive(Debug, Default)]
+pub struct App {
+    running: bool,
+    event_stream: EventStream,
+}
 
-    log_panics::init();
+impl App {
+    pub fn new() -> Self {
+        Self::default()
+    }
 
-    WriteLogger::init(
-        log::LevelFilter::Debug,
-        Config::default(),
-        File::create("debug.log").unwrap(),
-    )
-    .unwrap();
+    pub async fn run(mut self, mut terminal: DefaultTerminal) -> Result<()> {
+        self.running = true;
+        while self.running {
+            terminal.draw(|frame| self.draw(frame))?;
+            self.handle_crossterm_events().await?;
+        }
+        Ok(())
+    }
 
-    info!("debug logger initialized")
+    fn quit(&mut self) {
+        self.running = false;
+    }
+
+    async fn handle_crossterm_events(&mut self) -> Result<()> {
+        tokio::select! {
+            event = self.event_stream.next().fuse() => {
+                match event {
+                    Some(Ok(Event::Key(key))) if key.kind == KeyEventKind::Press => {
+                        self.on_key_event(key);
+                    }
+                    Some(Ok(Event::Mouse(mouse_event))) => {
+                        self.on_mouse_event(mouse_event);
+                    }
+                    Some(Ok(Event::Resize(width, height))) => {
+                        self.on_resize(width, height);
+                    }
+                    _ => {}
+                }
+            }
+            _ = tokio::time::sleep(tokio::time::Duration::from_millis(100)) => {}
+        }
+        Ok(())
+    }
+
+    fn on_key_event(&mut self, key: KeyEvent) {
+        match (key.modifiers, key.code) {
+            (_, KeyCode::Esc | KeyCode::Char('q'))
+            | (KeyModifiers::CONTROL, KeyCode::Char('c') | KeyCode::Char('C')) => self.quit(),
+            _ => {}
+        }
+    }
+
+    fn on_mouse_event(&self, mouse_event: MouseEvent) {
+        todo!();
+    }
+
+    fn on_resize(&self, width: u16, height: u16) {
+        todo!();
+    }
+
+    fn draw(&mut self, frame: &mut Frame) {
+        let title = Line::from("Ratatui Simple Template")
+            .bold()
+            .blue()
+            .centered();
+        let text = "Hello, Ratatui!\n\n\
+            Created using https://github.com/ratatui/templates\n\
+            Press `Esc`, `Ctrl-C` or `q` to stop running.";
+        frame.render_widget(
+            Paragraph::new(text)
+                .block(Block::bordered().title(title))
+                .centered(),
+            frame.area(),
+        )
+    }
 }

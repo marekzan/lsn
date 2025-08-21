@@ -70,7 +70,6 @@ impl App {
 
     pub fn run(mut self, terminal: &mut DefaultTerminal) -> Result<()> {
         self.update_view_items();
-        // Initially open the root folder to show its contents
         self.toggle_folder();
 
         while !self.should_exit {
@@ -94,9 +93,7 @@ impl App {
             .and_then(|i| self.ui_representation.get(i))
     }
 
-    /// Corrected function to avoid double mutable borrows.
     fn close_parent(&mut self) {
-        // get parent info
         let p_info = self
             .get_selected_path()
             .and_then(|node| node.parent())
@@ -113,10 +110,8 @@ impl App {
                 return;
             }
 
-            // Perform other mutable operations.
             self.update_view_items();
 
-            // Find the new position and update the state.
             if let Some(parent_index) = self
                 .ui_representation
                 .iter()
@@ -127,9 +122,7 @@ impl App {
         }
     }
 
-    /// Corrected function to avoid conflicting mutable borrows.
     fn toggle_folder(&mut self) {
-        // --- Phase 1: Immutable read to get basic info ---
         let selected_info = self
             .get_selected_path()
             .and_then(|p| self.path_to_id.get(p).map(|&id| (id, p.clone())));
@@ -138,7 +131,6 @@ impl App {
             let mut needs_loading = false;
             let mut is_directory = false;
 
-            // --- Phase 2: Check if children need loading in a small scope ---
             if let Some(node) = self.tree.get(node_id) {
                 if let NodeKind::Directory {
                     children_loaded, ..
@@ -151,7 +143,6 @@ impl App {
                 }
             }
 
-            // --- Phase 3: Load children if needed (this part mutates the tree) ---
             if needs_loading {
                 let parent_depth = self.tree.get(node_id).unwrap().data.depth;
                 let mut entries: Vec<(PathBuf, FsNode)> = match read_dir(&path) {
@@ -181,7 +172,6 @@ impl App {
                 }
             }
 
-            // --- Phase 4: Toggle open state and update UI ---
             if is_directory {
                 if let Some(node) = self.tree.get_mut(node_id) {
                     if let NodeKind::Directory { is_open, .. } = &mut node.data.kind {
