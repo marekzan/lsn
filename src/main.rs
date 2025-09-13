@@ -1,59 +1,25 @@
-mod app;
-mod node;
-mod ui;
-
-use std::io;
-
-use app::App;
+use clap::Parser;
+use cli::Cli;
 use color_eyre::Result;
-use log::info;
-use node::Node;
-use ratatui::crossterm::{
-    cursor::{MoveUp, Show},
-    execute,
-    terminal::{Clear, ClearType, disable_raw_mode},
-};
 
-fn main() -> Result<()> {
-    #[cfg(debug_assertions)]
-    init_debug_logger();
+use crate::app::App;
 
-    color_eyre::install()?;
+mod action;
+mod app;
+mod cli;
+mod components;
+mod config;
+mod errors;
+mod logging;
+mod terminal;
 
-    let tui_height = 50;
+#[tokio::main]
+async fn main() -> Result<()> {
+    crate::errors::init()?;
+    crate::logging::init()?;
 
-    let mut terminal = ratatui::init_with_options(ratatui::TerminalOptions {
-        viewport: ratatui::Viewport::Inline(tui_height),
-    });
-
-    terminal.clear()?;
-
-    let app_result = App::new()?.run(&mut terminal);
-    terminal.clear()?;
-
-    disable_raw_mode()?;
-
-    execute!(
-        io::stdout(),
-        Show,
-        MoveUp(tui_height),
-        Clear(ClearType::FromCursorDown)
-    )?;
-    app_result
-}
-
-fn init_debug_logger() {
-    use simplelog::{Config, WriteLogger};
-    use std::fs::File;
-
-    log_panics::init();
-
-    WriteLogger::init(
-        log::LevelFilter::Debug,
-        Config::default(),
-        File::create("debug.log").unwrap(),
-    )
-    .unwrap();
-
-    info!("debug logger initialized")
+    let args = Cli::parse();
+    let mut app = App::new(args.tick_rate, args.frame_rate)?;
+    app.run().await?;
+    Ok(())
 }
