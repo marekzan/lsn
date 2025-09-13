@@ -151,6 +151,8 @@ impl DerefMut for Terminal {
 
 impl Drop for Terminal {
     fn drop(&mut self) {
-        self.exit().unwrap();
+        if let Err(e) = self.exit() {
+            eprintln!("Error exiting terminal: {:?}", e);
+        };
     }
 }

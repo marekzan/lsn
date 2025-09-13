@@ -1,5 +1,3 @@
-#![allow(dead_code)] // Remove this once you start using the code
-
 use std::{collections::HashMap, env, path::PathBuf};
 
 use color_eyre::Result;
@@ -11,22 +9,22 @@ use ratatui::style::{Color, Modifier, Style};
 use serde::{Deserialize, de::Deserializer};
 use tracing::error;
 
-use crate::{action::Action, app::Mode};
+use crate::{action::GlobalAction, app::Mode};
 
-const DEFAULT_CONFIG: &str = include_str!("../.config/config.json5");
+const DEFAULT_CONFIG: &str = include_str!("../../.config/config.json5");
 
-#[derive(Clone, Debug, Deserialize, Default)]
+/* #[derive(Clone, Debug, Deserialize, Default)]
 pub struct AppConfig {
     #[serde(default)]
-    pub data_dir: PathBuf,
+    data_dir: PathBuf,
     #[serde(default)]
-    pub config_dir: PathBuf,
-}
+    config_dir: PathBuf,
+} */
 
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct Config {
-    #[serde(default, flatten)]
-    pub config: AppConfig,
+    // #[serde(default, flatten)]
+    // pub config: AppConfig,
     #[serde(default)]
     pub keybindings: KeyBindings,
     #[serde(default)]
@@ -123,14 +121,14 @@ fn project_directory() -> Option<ProjectDirs> {
 }
 
 #[derive(Clone, Debug, Default, Deref, DerefMut)]
-pub struct KeyBindings(pub HashMap<Mode, HashMap<Vec<KeyEvent>, Action>>);
+pub struct KeyBindings(pub HashMap<Mode, HashMap<Vec<KeyEvent>, GlobalAction>>);
 
 impl<'de> Deserialize<'de> for KeyBindings {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        let parsed_map = HashMap::<Mode, HashMap<String, Action>>::deserialize(deserializer)?;
+        let parsed_map = HashMap::<Mode, HashMap<String, GlobalAction>>::deserialize(deserializer)?;
 
         let keybindings = parsed_map
             .into_iter()
@@ -509,7 +507,7 @@ mod tests {
                 .unwrap()
                 .get(&parse_key_sequence("<q>").unwrap_or_default())
                 .unwrap(),
-            &Action::Quit
+            &GlobalAction::Quit
         );
         Ok(())
     }

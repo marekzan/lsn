@@ -6,7 +6,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, info};
 
 use crate::{
-    action::Action,
+    action::{AppAction, GlobalAction},
     components::{Component, fps::FpsCounter, home::Home},
     config::Config,
     terminal::{Terminal, events::TermEvent},
@@ -20,8 +20,8 @@ pub struct App {
     should_quit: bool,
     mode: Mode,
     last_tick_key_events: Vec<KeyEvent>,
-    action_sender: mpsc::UnboundedSender<Action>,
-    action_receiver: mpsc::UnboundedReceiver<Action>,
+    action_sender: mpsc::UnboundedSender<AppAction>,
+    action_receiver: mpsc::UnboundedReceiver<AppAction>,
 }
 
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -74,10 +74,10 @@ impl App {
         };
         let action_sender = self.action_sender.clone();
         match event {
-            TermEvent::Quit => action_sender.send(Action::Quit)?,
-            TermEvent::Tick => action_sender.send(Action::Tick)?,
-            TermEvent::Render => action_sender.send(Action::Render)?,
-            TermEvent::Resize(x, y) => action_sender.send(Action::Resize(x, y))?,
+            TermEvent::Quit => action_sender.send(GlobalAction::Quit.into())?,
+            TermEvent::Tick => action_sender.send(GlobalAction::Tick.into())?,
+            TermEvent::Render => action_sender.send(GlobalAction::Render.into())?,
+            TermEvent::Resize(x, y) => action_sender.send(GlobalAction::Resize(x, y).into())?,
             TermEvent::Key(key) => self.handle_key_event(key)?,
             _ => {}
         }
@@ -97,7 +97,7 @@ impl App {
         match keymap.get(&vec![key]) {
             Some(action) => {
                 info!("Got action: {action:?}");
-                action_sender.send(action.clone())?;
+                action_sender.send(action.clone().into())?;
             }
             _ => {
                 // If the key was not handled as a single key action,
@@ -107,7 +107,7 @@ impl App {
                 // Check for multi-key combinations
                 if let Some(action) = keymap.get(&self.last_tick_key_events) {
                     info!("Got action: {action:?}");
-                    action_sender.send(action.clone())?;
+                    action_sender.send(action.clone().into())?;
                 }
             }
         }
@@ -116,19 +116,22 @@ impl App {
 
     fn handle_actions(&mut self, tui: &mut Terminal) -> Result<()> {
         while let Ok(action) = self.action_receiver.try_recv() {
-            if action != Action::Tick && action != Action::Render {
-                debug!("{action:?}");
-            }
-            match action {
-                Action::Tick => {
-                    self.last_tick_key_events.drain(..);
+            if let AppAction::Global(global_action) = &action {
+                if *global_action != GlobalAction::Tick && *global_action != GlobalAction::Render {
+                    debug!("{:?}", global_action);
                 }
-                Action::Quit => self.should_quit = true,
-                Action::ClearScreen => tui.terminal.clear()?,
-                Action::Resize(w, h) => self.handle_resize(tui, w, h)?,
-                Action::Render => self.render(tui)?,
-                _ => {}
+                match global_action {
+                    GlobalAction::Tick => {
+                        self.last_tick_key_events.drain(..);
+                    }
+                    GlobalAction::Quit => self.should_quit = true,
+                    GlobalAction::ClearScreen => tui.terminal.clear()?,
+                    GlobalAction::Resize(w, h) => self.handle_resize(tui, *w, *h)?,
+                    GlobalAction::Render => self.render(tui)?,
+                    _ => {}
+                }
             }
+
             for component in self.ui_components.iter_mut() {
                 if let Some(action) = component.update(action.clone())? {
                     self.action_sender.send(action)?
@@ -150,7 +153,7 @@ impl App {
                 if let Err(err) = component.draw(frame, frame.area()) {
                     let _ = self
                         .action_sender
-                        .send(Action::Error(format!("Failed to draw: {:?}", err)));
+                        .send(GlobalAction::Error(format!("Failed to draw: {:?}", err)).into());
                 }
             }
         })?;

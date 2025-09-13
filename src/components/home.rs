@@ -3,11 +3,14 @@ use ratatui::{prelude::*, widgets::*};
 use tokio::sync::mpsc::UnboundedSender;
 
 use super::Component;
-use crate::{action::Action, config::Config};
+use crate::{action::AppAction, config::Config};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HomeAction {}
 
 #[derive(Default)]
 pub struct Home {
-    command_tx: Option<UnboundedSender<Action>>,
+    command_tx: Option<UnboundedSender<AppAction>>,
     config: Config,
 }
 
@@ -18,7 +21,7 @@ impl Home {
 }
 
 impl Component for Home {
-    fn register_action_handler(&mut self, tx: UnboundedSender<Action>) -> Result<()> {
+    fn register_action_handler(&mut self, tx: UnboundedSender<AppAction>) -> Result<()> {
         self.command_tx = Some(tx);
         Ok(())
     }
@@ -28,15 +31,11 @@ impl Component for Home {
         Ok(())
     }
 
-    fn update(&mut self, action: Action) -> Result<Option<Action>> {
-        match action {
-            Action::Tick => {
-                // add any logic here that should run on every tick
+    fn update(&mut self, action: AppAction) -> Result<Option<AppAction>> {
+        if let AppAction::Home(home_action) = action {
+            match home_action {
+                // handle HomeAction variants here
             }
-            Action::Render => {
-                // add any logic here that should run on every render
-            }
-            _ => {}
         }
         Ok(None)
     }
