@@ -50,12 +50,14 @@ impl App {
         let mut terminal = Terminal::new(self.tick_rate, self.frame_rate)?;
         terminal.enter()?;
 
+        // register important handlers for each component
         for component in self.ui_components.iter_mut() {
             component.register_action_handler(self.action_sender.clone())?;
             component.register_config_handler(self.config.clone())?;
             component.init(terminal.size()?)?;
         }
 
+        // main loop of the whole application
         loop {
             self.handle_terminal_events(&mut terminal).await?;
             self.handle_actions(&mut terminal)?;

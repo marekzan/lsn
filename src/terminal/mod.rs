@@ -51,7 +51,7 @@ impl Terminal {
         })
     }
 
-    /// Starts the event loop.
+    /// Starts the terminal event loop.
     pub fn start(&mut self) {
         self.cancellation_token.cancel(); // Cancel any existing task
         self.cancellation_token = CancellationToken::new();
@@ -66,7 +66,7 @@ impl Terminal {
         });
     }
 
-    /// Stops the event loop.
+    /// Stops the terminal event loop.
     pub fn stop(&self) -> Result<()> {
         self.cancellation_token.cancel(); // Cancel any existing task
         let mut counter = 0;
