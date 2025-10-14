@@ -13,9 +13,11 @@ pub fn init() -> Result<()> {
         .display_location_section(false)
         .display_env_section(false)
         .into_hooks();
+
     eyre_hook.install()?;
+
     std::panic::set_hook(Box::new(move |panic_info| {
-        if let Ok(mut t) = crate::terminal::Terminal::new(4.0, 60.0) {
+        if let Ok(mut t) = crate::terminal::Terminal::new(4.0, 60.0, false, 50) {
             if let Err(r) = t.exit() {
                 error!("Unable to exit Terminal: {:?}", r);
             }
@@ -31,6 +33,7 @@ pub fn init() -> Result<()> {
                 .expect("human-panic: printing error message to console failed");
             eprintln!("{}", panic_hook.panic_report(panic_info)); // prints color-eyre stack trace to stderr
         }
+
         let msg = format!("{}", panic_hook.panic_report(panic_info));
         error!("Error: {}", strip_ansi_escapes::strip_str(msg));
 
@@ -59,10 +62,10 @@ macro_rules! trace_dbg {
         (target: $target:expr, level: $level:expr, $ex:expr) => {
             {
                 match $ex {
-                        value => {
-                                tracing::event!(target: $target, $level, ?value, stringify!($ex));
-                                value
-                        }
+                    value => {
+                            tracing::event!(target: $target, $level, ?value, stringify!($ex));
+                            value
+                    }
                 }
             }
         };

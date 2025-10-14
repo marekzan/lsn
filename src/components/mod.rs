@@ -6,7 +6,7 @@ use ratatui::{
 };
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::{action::AppAction, config::Config, terminal::events::TermEvent};
+use crate::{action::Action, config::Config, terminal::events::TermEvent};
 
 pub mod fps;
 pub mod home;
@@ -25,7 +25,7 @@ pub trait Component {
     /// # Returns
     ///
     /// * `Result<()>` - An Ok result or an error.
-    fn register_action_handler(&mut self, _sender: UnboundedSender<AppAction>) -> Result<()> {
+    fn register_action_handler(&mut self, _sender: UnboundedSender<Action>) -> Result<()> {
         Ok(())
     }
     /// Register a configuration handler that provides configuration settings if necessary.
@@ -61,7 +61,7 @@ pub trait Component {
     /// # Returns
     ///
     /// * `Result<Option<AppAction>>` - An action to be processed or none.
-    fn handle_events(&mut self, event: Option<TermEvent>) -> Result<Option<AppAction>> {
+    fn handle_events(&mut self, event: Option<TermEvent>) -> Result<Option<Action>> {
         let action = match event {
             Some(TermEvent::Key(key_event)) => self.handle_key_event(key_event)?,
             Some(TermEvent::Mouse(mouse_event)) => self.handle_mouse_event(mouse_event)?,
@@ -78,7 +78,7 @@ pub trait Component {
     /// # Returns
     ///
     /// * `Result<Option<AppAction>>` - An action to be processed or none.
-    fn handle_key_event(&mut self, key: KeyEvent) -> Result<Option<AppAction>> {
+    fn handle_key_event(&mut self, key: KeyEvent) -> Result<Option<Action>> {
         let _ = key; // to appease clippy
         Ok(None)
     }
@@ -91,7 +91,7 @@ pub trait Component {
     /// # Returns
     ///
     /// * `Result<Option<AppAction>>` - An action to be processed or none.
-    fn handle_mouse_event(&mut self, _mouse: MouseEvent) -> Result<Option<AppAction>> {
+    fn handle_mouse_event(&mut self, _mouse: MouseEvent) -> Result<Option<Action>> {
         Ok(None)
     }
     /// Update the state of the component based on a received action.
@@ -103,7 +103,7 @@ pub trait Component {
     /// # Returns
     ///
     /// * `Result<Option<AppAction>>` - An action to be processed or none.
-    fn update(&mut self, _action: AppAction) -> Result<Option<AppAction>> {
+    fn update(&mut self, _action: Action) -> Result<Option<Action>> {
         Ok(None)
     }
     /// Render the component on the screen. (REQUIRED)

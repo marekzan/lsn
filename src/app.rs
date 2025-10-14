@@ -3,10 +3,11 @@ use crossterm::event::KeyEvent;
 use ratatui::prelude::Rect;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
-use tracing::{debug, info};
+use tracing::debug;
 
 use crate::{
-    action::{AppAction, GlobalAction},
+    action::{Action, AppAction},
+    cli::Cli,
     components::{Component, fps::FpsCounter, home::Home},
     config::Config,
     terminal::{Terminal, events::TermEvent},
@@ -16,12 +17,14 @@ pub struct App {
     config: Config,
     tick_rate: f64,
     frame_rate: f64,
+    fullscreen: bool,
+    inline_height: u16,
     ui_components: Vec<Box<dyn Component>>,
     should_quit: bool,
     mode: Mode,
     last_tick_key_events: Vec<KeyEvent>,
-    action_sender: mpsc::UnboundedSender<AppAction>,
-    action_receiver: mpsc::UnboundedReceiver<AppAction>,
+    action_tx: mpsc::UnboundedSender<Action>,
+    action_rx: mpsc::UnboundedReceiver<Action>,
 }
 
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -31,42 +34,51 @@ pub enum Mode {
 }
 
 impl App {
-    pub fn new(tick_rate: f64, frame_rate: f64) -> Result<Self> {
-        let (action_sender, action_receiver) = mpsc::unbounded_channel();
-        Ok(Self {
-            tick_rate,
-            frame_rate,
+    pub fn new(args: Cli) -> Result<Self> {
+        let (action_tx, action_rx) = mpsc::unbounded_channel();
+
+        return Ok(Self {
+            tick_rate: args.tick_rate,
+            frame_rate: args.frame_rate,
+            fullscreen: args.fullscreen,
+            inline_height: args.inline_height,
             ui_components: vec![Box::new(Home::new()), Box::new(FpsCounter::default())],
             should_quit: false,
             config: Config::new()?,
             mode: Mode::Home,
             last_tick_key_events: Vec::new(),
-            action_sender,
-            action_receiver,
-        })
+            action_tx,
+            action_rx,
+        });
     }
 
     pub async fn run(&mut self) -> Result<()> {
-        let mut terminal = Terminal::new(self.tick_rate, self.frame_rate)?;
+        let mut terminal = Terminal::new(
+            self.tick_rate,
+            self.frame_rate,
+            self.fullscreen,
+            self.inline_height,
+        )?;
         terminal.enter()?;
 
-        // register important handlers for each component
         for component in self.ui_components.iter_mut() {
-            component.register_action_handler(self.action_sender.clone())?;
+            component.register_action_handler(self.action_tx.clone())?;
             component.register_config_handler(self.config.clone())?;
             component.init(terminal.size()?)?;
         }
 
-        // main loop of the whole application
         loop {
             self.handle_terminal_events(&mut terminal).await?;
             self.handle_actions(&mut terminal)?;
             if self.should_quit {
-                terminal.stop()?;
+                // TODO: do we need this here when it is also called in `terminal.exit()`?
+                terminal.stop_event_loop()?;
                 break;
             }
         }
+
         terminal.exit()?;
+
         Ok(())
     }
 
@@ -74,32 +86,37 @@ impl App {
         let Some(event) = terminal.next_event().await else {
             return Ok(());
         };
-        let action_sender = self.action_sender.clone();
+
+        let action_tx = self.action_tx.clone();
+
         match event {
-            TermEvent::Quit => action_sender.send(GlobalAction::Quit.into())?,
-            TermEvent::Tick => action_sender.send(GlobalAction::Tick.into())?,
-            TermEvent::Render => action_sender.send(GlobalAction::Render.into())?,
-            TermEvent::Resize(x, y) => action_sender.send(GlobalAction::Resize(x, y).into())?,
+            TermEvent::Quit => action_tx.send(AppAction::Quit.into())?,
+            TermEvent::Tick => action_tx.send(AppAction::Tick.into())?,
+            TermEvent::Render => action_tx.send(AppAction::Render.into())?,
+            TermEvent::Resize(x, y) => action_tx.send(AppAction::Resize(x, y).into())?,
             TermEvent::Key(key) => self.handle_key_event(key)?,
             _ => {}
         }
+
         for component in self.ui_components.iter_mut() {
             if let Some(action) = component.handle_events(Some(event.clone()))? {
-                action_sender.send(action)?;
+                action_tx.send(action)?;
             }
         }
+
         Ok(())
     }
 
     fn handle_key_event(&mut self, key: KeyEvent) -> Result<()> {
-        let action_sender = self.action_sender.clone();
+        let action_tx = self.action_tx.clone();
+
         let Some(keymap) = self.config.keybindings.get(&self.mode) else {
             return Ok(());
         };
+
         match keymap.get(&vec![key]) {
             Some(action) => {
-                info!("Got action: {action:?}");
-                action_sender.send(action.clone().into())?;
+                action_tx.send(action.clone().into())?;
             }
             _ => {
                 // If the key was not handled as a single key action,
@@ -108,54 +125,54 @@ impl App {
 
                 // Check for multi-key combinations
                 if let Some(action) = keymap.get(&self.last_tick_key_events) {
-                    info!("Got action: {action:?}");
-                    action_sender.send(action.clone().into())?;
+                    action_tx.send(action.clone().into())?;
                 }
             }
         }
         Ok(())
     }
 
-    fn handle_actions(&mut self, tui: &mut Terminal) -> Result<()> {
-        while let Ok(action) = self.action_receiver.try_recv() {
-            if let AppAction::Global(global_action) = &action {
-                if *global_action != GlobalAction::Tick && *global_action != GlobalAction::Render {
-                    debug!("{:?}", global_action);
+    fn handle_actions(&mut self, terminal: &mut Terminal) -> Result<()> {
+        while let Ok(action) = self.action_rx.try_recv() {
+            if let Action::App(app_action) = &action {
+                if *app_action != AppAction::Tick && *app_action != AppAction::Render {
+                    debug!("Emitted action: {:?}", app_action);
                 }
-                match global_action {
-                    GlobalAction::Tick => {
+
+                match app_action {
+                    AppAction::Tick => {
                         self.last_tick_key_events.drain(..);
                     }
-                    GlobalAction::Quit => self.should_quit = true,
-                    GlobalAction::ClearScreen => tui.terminal.clear()?,
-                    GlobalAction::Resize(w, h) => self.handle_resize(tui, *w, *h)?,
-                    GlobalAction::Render => self.render(tui)?,
+                    AppAction::Quit => self.should_quit = true,
+                    AppAction::ClearScreen => terminal.terminal.clear()?,
+                    AppAction::Resize(w, h) => self.handle_resize(terminal, *w, *h)?,
+                    AppAction::Render => self.render(terminal)?,
                     _ => {}
                 }
             }
 
             for component in self.ui_components.iter_mut() {
                 if let Some(action) = component.update(action.clone())? {
-                    self.action_sender.send(action)?
+                    self.action_tx.send(action)?
                 };
             }
         }
         Ok(())
     }
 
-    fn handle_resize(&mut self, tui: &mut Terminal, w: u16, h: u16) -> Result<()> {
-        tui.resize(Rect::new(0, 0, w, h))?;
-        self.render(tui)?;
+    fn handle_resize(&mut self, terminal: &mut Terminal, w: u16, h: u16) -> Result<()> {
+        terminal.resize(Rect::new(0, 0, w, h))?;
+        self.render(terminal)?;
         Ok(())
     }
 
-    fn render(&mut self, tui: &mut Terminal) -> Result<()> {
-        tui.draw(|frame| {
+    fn render(&mut self, terminal: &mut Terminal) -> Result<()> {
+        terminal.draw(|frame| {
             for component in self.ui_components.iter_mut() {
                 if let Err(err) = component.draw(frame, frame.area()) {
                     let _ = self
-                        .action_sender
-                        .send(GlobalAction::Error(format!("Failed to draw: {:?}", err)).into());
+                        .action_tx
+                        .send(AppAction::Error(format!("Failed to draw: {:?}", err)).into());
                 }
             }
         })?;

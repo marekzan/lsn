@@ -4,7 +4,7 @@ use strum::Display;
 use crate::components::home::HomeAction;
 
 #[derive(Debug, Clone, PartialEq, Eq, Display, Serialize, Deserialize)]
-pub enum GlobalAction {
+pub enum AppAction {
     Tick,
     Render,
     Resize(u16, u16),
@@ -17,19 +17,19 @@ pub enum GlobalAction {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AppAction {
-    Global(GlobalAction),
+pub enum Action {
+    App(AppAction),
     Home(HomeAction),
 }
 
-impl From<GlobalAction> for AppAction {
-    fn from(action: GlobalAction) -> Self {
-        AppAction::Global(action)
+impl From<AppAction> for Action {
+    fn from(action: AppAction) -> Self {
+        Action::App(action)
     }
 }
 
-impl From<HomeAction> for AppAction {
+impl From<HomeAction> for Action {
     fn from(action: HomeAction) -> Self {
-        AppAction::Home(action)
+        Action::Home(action)
     }
 }
