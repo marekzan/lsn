@@ -1,12 +1,5 @@
-[package]
-name = "lsn"
-version = "0.1.0"
-edition = "2024"
+[workspace]
+members = ["lsn", "lsn-core", "lsn-ui"]
+resolver = "2"
 
-[dependencies]
-color-eyre = "0.6.5"
-log = "0.4.27"
-log-panics = "2.1.0"
-ratatui = "0.29.0"
-simplelog = "0.12.2"
-thiserror = "2.0.12"
+[workspace.dependencies]

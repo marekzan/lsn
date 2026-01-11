@@ -1,0 +1,13 @@
+[package]
+name = "lsn"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+lsn-core = { path = "../lsn-core" }
+lsn-ui = { path = "../lsn-ui" }
+color-eyre = "0.6.5"
+log = "0.4.27"
+log-panics = "2.1.0"
+simplelog = "0.12.2"
+ratatui = "0.29.0"
