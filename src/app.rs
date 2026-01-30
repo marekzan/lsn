@@ -7,6 +7,7 @@ use tracing::debug;
 
 use crate::{
     action::{Action, AppAction},
+    arena::Arena,
     cli::Cli,
     components::{Component, fps::FpsCounter, home::Home},
     config::Config,
@@ -15,6 +16,7 @@ use crate::{
 
 pub struct App {
     config: Config,
+    arena: Arena<String>,
     tick_rate: f64,
     frame_rate: f64,
     fullscreen: bool,
@@ -38,6 +40,7 @@ impl App {
         let (action_tx, action_rx) = mpsc::unbounded_channel();
 
         return Ok(Self {
+            arena: Arena::new(),
             tick_rate: args.tick_rate,
             frame_rate: args.frame_rate,
             fullscreen: args.fullscreen,
