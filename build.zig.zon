@@ -1,0 +1,15 @@
+.{
+    .name = .lsn,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.17.0",
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "LICENSE",
+        "LICENSE-APACHE",
+        "LICENSE-MIT",
+        "README.md",
+    },
+    .fingerprint = 0x10948d3c7162472c,
+}

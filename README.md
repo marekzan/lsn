@@ -12,6 +12,18 @@ Explore and manage files in the terminal via a tree view.
 - pinned directories in their own tab
 - runs inline below your prompt (default) or fullscreen (`-f`)
 
+## Build
+
+Needs [Zig](https://ziglang.org) 0.17 and a libc. There are no other
+dependencies, the terminal layer is part of lsn.
+
+```sh
+zig build                          # debug build in zig-out/bin/lsn
+zig build -Doptimize=ReleaseSafe   # optimized
+zig build test                     # tests
+zig build run -- -f                # run fullscreen
+```
+
 ## Usage
 
 ```sh
@@ -41,6 +53,10 @@ Press `?` inside lsn for all keys. The most important ones:
 | `b` `B`       | pin directory, pins tab                  |
 | `H` `L` `~`   | root to parent / to dir / home           |
 | `enter` `o` `O` | pick and print, then quit              |
+
+Known limits: search and sorting fold case only for ASCII (`ä` does not find
+`Ä`), and the display width of unusual unicode is approximated. Linux only for
+now (`statx`, `/dev/tty`).
 
 See [ARCHITECTURE.md](./ARCHITECTURE.md) for how it is built.
 
