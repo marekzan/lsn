@@ -110,7 +110,7 @@ impl App {
             pins,
             mode: Mode::Normal,
             status: None,
-            show_meta: false,
+            show_meta: true,
             should_quit: false,
             output: Vec::new(),
             page: 10,
