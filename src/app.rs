@@ -2,7 +2,6 @@ use std::{
     collections::BTreeSet,
     io,
     path::{Path, PathBuf},
-    time::Instant,
 };
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -191,41 +190,18 @@ impl App {
                 }
             }
             Mode::Prompt(prompt) => self.handle_prompt(prompt, key),
-            Mode::Jump(jump) => self.handle_jump(jump, key, Instant::now()),
+            Mode::Jump(jump) => self.handle_jump(jump, key),
         }
         self.prepare();
     }
 
-    /// when the app wants to be woken up without a key press
-    pub fn deadline(&self) -> Option<Instant> {
-        match &self.mode {
-            Mode::Jump(jump) => jump.deadline(),
-            _ => None,
-        }
-    }
-
-    /// called by the event loop once a deadline has passed
-    pub fn tick(&mut self, now: Instant) {
-        if self.deadline().is_none_or(|d| d > now) {
-            return;
-        }
-        if let Mode::Jump(mut jump) = std::mem::replace(&mut self.mode, Mode::Normal) {
-            let tab = &mut self.tabs[self.active];
-            let step = match jump.current() {
-                Some(h) => jump.accept(tab, h, now),
-                None => Step::Continue,
-            };
-            self.after_jump_step(jump, step);
-        }
-    }
-
-    fn handle_jump(&mut self, mut jump: Jump, key: KeyEvent, now: Instant) {
+    fn handle_jump(&mut self, mut jump: Jump, key: KeyEvent) {
         let tab = &mut self.tabs[self.active];
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let step = match key.code {
             KeyCode::Esc => jump.finish(tab),
             KeyCode::Enter => match jump.current() {
-                Some(h) => jump.accept(tab, h, now),
+                Some(h) => jump.accept(tab, h),
                 None => Step::Continue,
             },
             KeyCode::Up | KeyCode::BackTab => {
@@ -245,13 +221,11 @@ impl App {
                 Step::Continue
             }
             KeyCode::Backspace if jump.input.text().is_empty() => {
-                jump.up(tab, now);
+                jump.up(tab);
                 Step::Continue
             }
-            KeyCode::Char(c) if !ctrl => jump.type_char(tab, c, now),
             _ => {
                 if jump.input.handle(key) {
-                    jump.changed = now;
                     jump.update(tab);
                 }
                 Step::Continue
@@ -453,8 +427,8 @@ impl App {
                     &previous,
                 );
             }
-            Action::Jump => {
-                let jump = Jump::new(&mut self.tabs[self.active], Instant::now());
+            Action::Jump(start) => {
+                let jump = Jump::new(&mut self.tabs[self.active], start);
                 self.mode = Mode::Jump(jump);
             }
             Action::FilterMenu => self.mode = Mode::Menu(Menu::Filter),
@@ -1046,31 +1020,26 @@ mod tests {
             .collect()
     }
 
-    fn after_delay(app: &mut App) {
-        app.tick(Instant::now() + crate::jump::DELAY);
-    }
-
     #[test]
-    fn jump_into_dir_after_delay_and_end_on_file() {
+    fn jump_from_root_through_dirs_to_file() {
         let Fixture {
             mut app,
             root,
             _dir,
         } = fixture();
-        keys(&mut app, ";");
+        // the cursor is deep in the tree, `e` still starts at the top level
+        keys(&mut app, "lj");
+        keys(&mut app, "e");
         assert_eq!(jump_level(&app), vec!["a", "b", "c.txt"]);
 
         keys(&mut app, "a");
         assert_eq!(jump_level(&app), vec!["a"]);
-        // no jump before the delay is over
-        app.tick(Instant::now());
-        assert_eq!(jump_level(&app), vec!["a"]);
-        after_delay(&mut app);
+        keys(&mut app, "\n");
         assert_eq!(jump_level(&app), vec!["one.txt", "two.txt"]);
 
         keys(&mut app, "tw");
         assert_eq!(jump_level(&app), vec!["two.txt"]);
-        after_delay(&mut app);
+        keys(&mut app, "\n");
         assert!(matches!(app.mode, Mode::Normal));
         assert_eq!(app.tab().current_path(), Some(root.join("a/two.txt")));
         assert_eq!(
@@ -1080,19 +1049,11 @@ mod tests {
     }
 
     #[test]
-    fn jump_typing_fast_enters_without_waiting() {
-        let Fixture {
-            mut app,
-            root,
-            _dir,
-        } = fixture();
-        // `a` leaves only the dir a, `o` matches nothing there any more, so
-        // we are in a and `o` filters its content
-        keys(&mut app, ";ao");
+    fn jump_here_starts_on_cursor_level() {
+        let Fixture { mut app, _dir, .. } = fixture();
+        keys(&mut app, "lj");
+        keys(&mut app, "E");
         assert_eq!(jump_level(&app), vec!["one.txt", "two.txt"]);
-        keys(&mut app, "n");
-        after_delay(&mut app);
-        assert_eq!(app.tab().current_path(), Some(root.join("a/one.txt")));
     }
 
     #[test]
@@ -1102,23 +1063,20 @@ mod tests {
             root,
             _dir,
         } = fixture();
-        keys(&mut app, ";a");
-        after_delay(&mut app);
-        keys(&mut app, "\x1b");
+        keys(&mut app, "ea\n\x1b");
         assert!(matches!(app.mode, Mode::Normal));
         assert_eq!(app.tab().current_path(), Some(root.join("a")));
         assert!(app.tab().current_node().unwrap().expanded);
     }
 
     #[test]
-    fn jump_enter_backspace_and_cursor() {
+    fn jump_backspace_and_cursor() {
         let Fixture {
             mut app,
             root,
             _dir,
         } = fixture();
-        // two matches: enter takes the one under the cursor
-        keys(&mut app, ";.");
+        keys(&mut app, "e.");
         assert_eq!(jump_level(&app), vec!["c.txt"]);
         app.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
         keys(&mut app, "\n");

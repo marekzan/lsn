@@ -1,16 +1,10 @@
-use std::time::{Duration, Instant};
-
 use crate::{arena::Handle, input::Input, tab::Tab, view};
-
-/// how long a single match has to stay unchanged before we jump into it
-pub const DELAY: Duration = Duration::from_millis(500);
 
 /// quick navigation, level by level.
 ///
-/// the user types, the current level is filtered down to the entries that
-/// match. once exactly one is left (and nothing is typed for `DELAY`), a
-/// directory is entered and the next level is shown, a file ends the jump
-/// with the cursor on it.
+/// one level of the tree is shown flat and filtered by what the user types.
+/// `enter` on a directory shows its content as the next level, `enter` on a
+/// file ends the jump with the cursor on it.
 ///
 /// the jump only looks at the tree, it never changes the real view. only when
 /// it ends the result is revealed in the tab.
@@ -21,8 +15,6 @@ pub struct Jump {
     pub input: Input,
     pub matches: Vec<Handle>,
     pub cursor: usize,
-    /// last time the input or the level changed
-    pub changed: Instant,
 }
 
 /// what the app has to do after a jump step
@@ -34,25 +26,34 @@ pub enum Step {
     Done(Option<Handle>),
 }
 
+/// where a jump starts
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Start {
+    /// the top level of the tab
+    Root,
+    /// the level of the entry under the cursor
+    Here,
+}
+
 impl Jump {
-    /// starts on the level of the entry under the cursor
-    pub fn new(tab: &mut Tab, now: Instant) -> Self {
-        let dir = match tab.current() {
-            Some(h) => tab.tree.parent(h),
-            // empty view: the root of a normal tab
-            None => tab
-                .tree
-                .roots()
-                .first()
-                .copied()
-                .filter(|_| tab.root_path().is_some()),
+    pub fn new(tab: &mut Tab, start: Start) -> Self {
+        // the top level of a normal tab is the content of its root, the top
+        // level of the pins tab are the roots themselves
+        let top = tab
+            .tree
+            .roots()
+            .first()
+            .copied()
+            .filter(|_| tab.root_path().is_some());
+        let dir = match (start, tab.current()) {
+            (Start::Here, Some(h)) => tab.tree.parent(h),
+            _ => top,
         };
         let mut jump = Self {
             dir,
             input: Input::default(),
             matches: Vec::new(),
             cursor: 0,
-            changed: now,
         };
         jump.update(tab);
         jump
@@ -102,11 +103,6 @@ impl Jump {
             .unwrap_or(0);
     }
 
-    /// when the single remaining match should be taken automatically
-    pub fn deadline(&self) -> Option<Instant> {
-        (!self.input.text().is_empty() && self.matches.len() == 1).then(|| self.changed + DELAY)
-    }
-
     pub fn current(&self) -> Option<Handle> {
         self.matches.get(self.cursor).copied()
     }
@@ -117,12 +113,11 @@ impl Jump {
     }
 
     /// enters a directory or ends the jump on a file
-    pub fn accept(&mut self, tab: &mut Tab, handle: Handle, now: Instant) -> Step {
+    pub fn accept(&mut self, tab: &mut Tab, handle: Handle) -> Step {
         match tab.tree.get(handle) {
             Some(node) if node.is_dir() => {
                 self.dir = Some(handle);
                 self.input = Input::default();
-                self.changed = now;
                 self.update(tab);
                 Step::Continue
             }
@@ -132,7 +127,7 @@ impl Jump {
     }
 
     /// one level up, but never above the root of a normal tab
-    pub fn up(&mut self, tab: &mut Tab, now: Instant) {
+    pub fn up(&mut self, tab: &mut Tab) {
         let Some(dir) = self.dir else { return };
         let parent = tab.tree.parent(dir);
         if parent.is_none() && tab.root_path().is_some() {
@@ -140,32 +135,11 @@ impl Jump {
         }
         self.dir = parent;
         self.input = Input::default();
-        self.changed = now;
         self.update(tab);
         // keep the cursor on the directory we came from
         if let Some(pos) = self.matches.iter().position(|h| *h == dir) {
             self.cursor = pos;
         }
-    }
-
-    /// typing a char. if the char would leave nothing and there was exactly
-    /// one directory left, we enter it right away and the char counts for the
-    /// next level. this way fast typing never has to wait for the timer.
-    pub fn type_char(&mut self, tab: &mut Tab, c: char, now: Instant) -> Step {
-        let next = format!("{}{c}", self.input.text());
-        if !self.input.text().is_empty()
-            && self.matches.len() == 1
-            && self.candidates(tab, &next).is_empty()
-        {
-            let only = self.matches[0];
-            if tab.tree.get(only).is_some_and(|n| n.is_dir()) {
-                self.accept(tab, only, now);
-            }
-        }
-        self.input = Input::new(&format!("{}{c}", self.input.text()));
-        self.changed = now;
-        self.update(tab);
-        Step::Continue
     }
 
     /// the user is done: stay in the directory the jump is in

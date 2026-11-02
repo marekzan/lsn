@@ -1,6 +1,6 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::{action::Action, view::SortBy};
+use crate::{action::Action, jump::Start, view::SortBy};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Key {
@@ -89,7 +89,12 @@ pub const NORMAL: &[Binding] = &[
     b(&[k('a')], Action::Create, "new file (dir/ for dir)"),
     b(&[k('c')], Action::Chmod, "chmod"),
     b(&[k('/')], Action::Search, "search"),
-    b(&[k(';')], Action::Jump, "jump (type, auto-enter)"),
+    b(&[k('e')], Action::Jump(Start::Root), "jump from top level"),
+    b(
+        &[k('E')],
+        Action::Jump(Start::Here),
+        "jump from current level",
+    ),
     b(&[k('f')], Action::FilterMenu, "filter menu"),
     b(&[k('s')], Action::SortMenu, "sort menu"),
     b(&[k('.')], Action::ToggleHidden, "toggle hidden"),

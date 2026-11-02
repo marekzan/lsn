@@ -3,7 +3,7 @@
 lsn is split into layers that only depend on the layers below them:
 
 ```
-main.rs ─ event loop: draw → wait for key (or an app deadline) → update
+main.rs ─ event loop: draw → wait for key → update (no ticks, only redraws after input)
   │
   ├─ term.rs ── terminal setup: inline viewport (default) or alternate screen (--fullscreen)
   ├─ ui.rs ──── renders App state with ratatui, never mutates the model
@@ -63,16 +63,12 @@ opened are found too.
 
 ## Jump
 
-`;` starts a jump (`jump.rs`) on the level of the cursor. It shows one flat
-level and filters it with the typed text. When exactly one entry is left and
-nothing is typed for 500 ms, a directory is entered (next level, empty input)
-and a file ends the jump. If a char would leave no match while exactly one
-directory is left, that directory is entered at once and the char counts for
-the next level, so fast typing never waits. `esc` ends the jump in the current
+`e` starts a jump (`jump.rs`) on the top level of the tab, `E` on the level of
+the cursor. It shows one flat level and filters it with the typed text.
+`enter` on a directory shows its content as the next level (with an empty
+input), `enter` on a file ends the jump with the cursor on it, `backspace` on
+an empty input goes one level up. `esc` ends the jump in the current
 directory. Only at the end the result is revealed in the real tree.
-
-The timer is the only reason the event loop does not just block on a key:
-`App::deadline` tells the loop how long to wait, `App::tick` fires the jump.
 
 ## Inline mode and stdout
 

@@ -366,7 +366,10 @@ fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
         Style::new().dim(),
     ));
     let position = match &app.mode {
-        Mode::Jump(jump) => format!("{} matches", jump.matches.len()),
+        Mode::Jump(jump) => match jump.matches.len() {
+            1 => "1 match".to_string(),
+            n => format!("{n} matches"),
+        },
         _ => format!(
             "{}/{}",
             (tab.cursor + 1).min(tab.items.len()),

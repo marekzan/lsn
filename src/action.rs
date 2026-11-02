@@ -1,4 +1,4 @@
-use crate::view::SortBy;
+use crate::{jump::Start, view::SortBy};
 
 /// everything the user can do in normal mode.
 ///
@@ -42,8 +42,8 @@ pub enum Action {
 
     // view
     Search,
-    /// type to narrow the current level, jump into single matches
-    Jump,
+    /// type to narrow a level, enter to go deeper
+    Jump(Start),
     FilterMenu,
     SortMenu,
     ToggleHidden,
