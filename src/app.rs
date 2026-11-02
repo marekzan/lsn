@@ -2,14 +2,16 @@ use std::{
     collections::BTreeSet,
     io,
     path::{Path, PathBuf},
+    time::Instant,
 };
 
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::{
     action::Action,
     fs::ops::{self, TransferKind},
     input::Input,
+    jump::{Jump, Step},
     keymap,
     pins::Pins,
     tab::{Tab, TabKind},
@@ -27,6 +29,8 @@ pub enum Mode {
     ConfirmDelete(Vec<PathBuf>),
     /// the help screen, scrolled down by this many lines
     Help(u16),
+    /// quick navigation level by level, see `jump.rs`
+    Jump(Jump),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -187,8 +191,90 @@ impl App {
                 }
             }
             Mode::Prompt(prompt) => self.handle_prompt(prompt, key),
+            Mode::Jump(jump) => self.handle_jump(jump, key, Instant::now()),
         }
         self.prepare();
+    }
+
+    /// when the app wants to be woken up without a key press
+    pub fn deadline(&self) -> Option<Instant> {
+        match &self.mode {
+            Mode::Jump(jump) => jump.deadline(),
+            _ => None,
+        }
+    }
+
+    /// called by the event loop once a deadline has passed
+    pub fn tick(&mut self, now: Instant) {
+        if self.deadline().is_none_or(|d| d > now) {
+            return;
+        }
+        if let Mode::Jump(mut jump) = std::mem::replace(&mut self.mode, Mode::Normal) {
+            let tab = &mut self.tabs[self.active];
+            let step = match jump.current() {
+                Some(h) => jump.accept(tab, h, now),
+                None => Step::Continue,
+            };
+            self.after_jump_step(jump, step);
+        }
+    }
+
+    fn handle_jump(&mut self, mut jump: Jump, key: KeyEvent, now: Instant) {
+        let tab = &mut self.tabs[self.active];
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let step = match key.code {
+            KeyCode::Esc => jump.finish(tab),
+            KeyCode::Enter => match jump.current() {
+                Some(h) => jump.accept(tab, h, now),
+                None => Step::Continue,
+            },
+            KeyCode::Up | KeyCode::BackTab => {
+                jump.move_cursor(-1);
+                Step::Continue
+            }
+            KeyCode::Char('p') if ctrl => {
+                jump.move_cursor(-1);
+                Step::Continue
+            }
+            KeyCode::Down | KeyCode::Tab => {
+                jump.move_cursor(1);
+                Step::Continue
+            }
+            KeyCode::Char('n') if ctrl => {
+                jump.move_cursor(1);
+                Step::Continue
+            }
+            KeyCode::Backspace if jump.input.text().is_empty() => {
+                jump.up(tab, now);
+                Step::Continue
+            }
+            KeyCode::Char(c) if !ctrl => jump.type_char(tab, c, now),
+            _ => {
+                if jump.input.handle(key) {
+                    jump.changed = now;
+                    jump.update(tab);
+                }
+                Step::Continue
+            }
+        };
+        self.after_jump_step(jump, step);
+    }
+
+    fn after_jump_step(&mut self, jump: Jump, step: Step) {
+        match step {
+            Step::Continue => self.mode = Mode::Jump(jump),
+            Step::Done(None) => {}
+            Step::Done(Some(target)) => {
+                let tab = &mut self.tabs[self.active];
+                let Some(path) = tab.tree.path(target).map(Path::to_path_buf) else {
+                    return;
+                };
+                if tab.tree.get(target).is_some_and(|n| n.is_dir()) {
+                    tab.tree.expand(target);
+                }
+                tab.reveal(&path, &self.marked);
+            }
+        }
     }
 
     fn handle_prompt(&mut self, mut prompt: Prompt, key: KeyEvent) {
@@ -366,6 +452,10 @@ impl App {
                     },
                     &previous,
                 );
+            }
+            Action::Jump => {
+                let jump = Jump::new(&mut self.tabs[self.active], Instant::now());
+                self.mode = Mode::Jump(jump);
             }
             Action::FilterMenu => self.mode = Mode::Menu(Menu::Filter),
             Action::SortMenu => self.mode = Mode::Menu(Menu::Sort),
@@ -944,6 +1034,102 @@ mod tests {
         // the search does not open anything
         keys(&mut app, "\x1b");
         assert_eq!(visible(&app), vec!["a", "b", "c.txt"]);
+    }
+
+    fn jump_level(app: &App) -> Vec<String> {
+        let Mode::Jump(jump) = &app.mode else {
+            panic!("not in jump mode");
+        };
+        jump.matches
+            .iter()
+            .map(|h| app.tab().tree.get(*h).unwrap().name.clone())
+            .collect()
+    }
+
+    fn after_delay(app: &mut App) {
+        app.tick(Instant::now() + crate::jump::DELAY);
+    }
+
+    #[test]
+    fn jump_into_dir_after_delay_and_end_on_file() {
+        let Fixture {
+            mut app,
+            root,
+            _dir,
+        } = fixture();
+        keys(&mut app, ";");
+        assert_eq!(jump_level(&app), vec!["a", "b", "c.txt"]);
+
+        keys(&mut app, "a");
+        assert_eq!(jump_level(&app), vec!["a"]);
+        // no jump before the delay is over
+        app.tick(Instant::now());
+        assert_eq!(jump_level(&app), vec!["a"]);
+        after_delay(&mut app);
+        assert_eq!(jump_level(&app), vec!["one.txt", "two.txt"]);
+
+        keys(&mut app, "tw");
+        assert_eq!(jump_level(&app), vec!["two.txt"]);
+        after_delay(&mut app);
+        assert!(matches!(app.mode, Mode::Normal));
+        assert_eq!(app.tab().current_path(), Some(root.join("a/two.txt")));
+        assert_eq!(
+            visible(&app),
+            vec!["a", "  one.txt", "  two.txt", "b", "c.txt"]
+        );
+    }
+
+    #[test]
+    fn jump_typing_fast_enters_without_waiting() {
+        let Fixture {
+            mut app,
+            root,
+            _dir,
+        } = fixture();
+        // `a` leaves only the dir a, `o` matches nothing there any more, so
+        // we are in a and `o` filters its content
+        keys(&mut app, ";ao");
+        assert_eq!(jump_level(&app), vec!["one.txt", "two.txt"]);
+        keys(&mut app, "n");
+        after_delay(&mut app);
+        assert_eq!(app.tab().current_path(), Some(root.join("a/one.txt")));
+    }
+
+    #[test]
+    fn jump_escape_stays_in_dir() {
+        let Fixture {
+            mut app,
+            root,
+            _dir,
+        } = fixture();
+        keys(&mut app, ";a");
+        after_delay(&mut app);
+        keys(&mut app, "\x1b");
+        assert!(matches!(app.mode, Mode::Normal));
+        assert_eq!(app.tab().current_path(), Some(root.join("a")));
+        assert!(app.tab().current_node().unwrap().expanded);
+    }
+
+    #[test]
+    fn jump_enter_backspace_and_cursor() {
+        let Fixture {
+            mut app,
+            root,
+            _dir,
+        } = fixture();
+        // two matches: enter takes the one under the cursor
+        keys(&mut app, ";.");
+        assert_eq!(jump_level(&app), vec!["c.txt"]);
+        app.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+        keys(&mut app, "\n");
+        assert_eq!(jump_level(&app), vec!["one.txt", "two.txt"]);
+        // backspace with an empty input goes one level up again
+        app.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+        assert_eq!(jump_level(&app), vec!["a", "b", "c.txt"]);
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        keys(&mut app, "\n");
+        assert_eq!(app.tab().current_path(), Some(root.join("c.txt")));
     }
 
     #[test]

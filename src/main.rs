@@ -1,4 +1,4 @@
-use std::io::Write;
+use std::{io::Write, time::Instant};
 
 use clap::Parser;
 use color_eyre::{Result, eyre::WrapErr};
@@ -17,6 +17,7 @@ mod arena;
 mod cli;
 mod fs;
 mod input;
+mod jump;
 mod keymap;
 mod pins;
 mod tab;
@@ -48,11 +49,22 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-/// the event loop: draw, wait for a key, update. there is no tick, the ui is
-/// only redrawn when something happened.
+/// the event loop: draw, wait for a key, update. the ui is only redrawn when
+/// something happened (a key, a resize or a deadline of the app).
 fn run(session: &mut Session, app: &mut App) -> Result<()> {
     loop {
         session.terminal.draw(|frame| ui::draw(frame, app))?;
+
+        // some modes want to act after a pause (jump), wait for a key only
+        // until then
+        if let Some(deadline) = app.deadline() {
+            let timeout = deadline.saturating_duration_since(Instant::now());
+            if !event::poll(timeout)? {
+                app.tick(Instant::now());
+                continue;
+            }
+        }
+
         match event::read()? {
             Event::Key(key) if key.kind != KeyEventKind::Release => app.handle_key(key),
             Event::Resize(..) => session.terminal.autoresize()?,

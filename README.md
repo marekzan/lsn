@@ -6,6 +6,7 @@ Explore and manage files in the terminal via a tree view.
 - tabs: copy / move files between them with a global clipboard
 - marks across tabs, act on many files at once
 - filters (dirs, files, symlinks, hidden, only marked) and live search
+- jump mode: type to narrow a level, single matches are entered automatically
 - sort by name, size, modified, extension
 - metadata columns like `eza -l` (permissions, owner, size, date), chmod
 - pinned directories in their own tab
@@ -32,6 +33,7 @@ Press `?` inside lsn for all keys. The most important ones:
 | `y` `x` `p`   | copy, cut, paste into dir under cursor   |
 | `d` `r` `a` `c` | delete, rename, new file (`dir/`), chmod |
 | `/`           | search                                   |
+| `;`           | jump: type to narrow the level, single matches open after 500ms, `esc` stays |
 | `f` …         | filter menu (`d` `f` `l` `.` `m` `r`)    |
 | `s` …         | sort menu (`n` `s` `m` `e` `d` `r`)      |
 | `i`           | metadata columns                         |

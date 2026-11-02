@@ -3,7 +3,7 @@
 lsn is split into layers that only depend on the layers below them:
 
 ```
-main.rs ─ event loop: draw → wait for key → update (no ticks, only redraws after input)
+main.rs ─ event loop: draw → wait for key (or an app deadline) → update
   │
   ├─ term.rs ── terminal setup: inline viewport (default) or alternate screen (--fullscreen)
   ├─ ui.rs ──── renders App state with ratatui, never mutates the model
@@ -12,6 +12,7 @@ main.rs ─ event loop: draw → wait for key → update (no ticks, only redraws
        │         keys ─(keymap.rs)→ Action ─(App::apply)→ state changes
        │
        ├─ tab.rs ──── Tab: one FileTree + its view list, cursor, filter and sort
+       ├─ jump.rs ─── level by level quick navigation
        ├─ view.rs ─── view-model: flattens the visible part of a tree (filter + sort)
        ├─ fs/
        │   ├─ tree.rs  model: FileTree, nodes stored in the Arena, lazy loading, refresh
@@ -59,6 +60,19 @@ Search and "only marked" also look into collapsed directories, so matches deep
 in the tree show up with their parents. When a search starts, the tab loads up
 to 20 000 not yet read entries breadth first, so files in folders you never
 opened are found too.
+
+## Jump
+
+`;` starts a jump (`jump.rs`) on the level of the cursor. It shows one flat
+level and filters it with the typed text. When exactly one entry is left and
+nothing is typed for 500 ms, a directory is entered (next level, empty input)
+and a file ends the jump. If a char would leave no match while exactly one
+directory is left, that directory is entered at once and the char counts for
+the next level, so fast typing never waits. `esc` ends the jump in the current
+directory. Only at the end the result is revealed in the real tree.
+
+The timer is the only reason the event loop does not just block on a key:
+`App::deadline` tells the loop how long to wait, `App::tick` fires the jump.
 
 ## Inline mode and stdout
 

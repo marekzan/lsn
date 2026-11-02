@@ -53,16 +53,7 @@ impl Filter {
     }
 
     fn matches_query(&self, node: &Node) -> bool {
-        if self.query.is_empty() {
-            return true;
-        }
-        if self.query.chars().any(char::is_uppercase) {
-            node.name.contains(&self.query)
-        } else {
-            node.name
-                .to_lowercase()
-                .contains(&self.query.to_lowercase())
-        }
+        self.query.is_empty() || match_range(&self.query, &node.name).is_some()
     }
 
     fn matches_kind(&self, node: &Node) -> bool {
@@ -128,7 +119,7 @@ impl Default for Sort {
 }
 
 impl Sort {
-    fn compare(&self, a: &Node, b: &Node) -> Ordering {
+    pub fn compare(&self, a: &Node, b: &Node) -> Ordering {
         if self.dirs_first {
             match (a.is_dir(), b.is_dir()) {
                 (true, false) => return Ordering::Less,
@@ -161,6 +152,23 @@ impl Sort {
             SortBy::Extension => "ext",
         };
         format!("{by}{}", if self.reverse { " ↓" } else { "" })
+    }
+}
+
+/// byte range of the first occurrence of `query` in `name`. smartcase: the
+/// search is case sensitive as soon as the query has an uppercase letter.
+pub fn match_range(query: &str, name: &str) -> Option<(usize, usize)> {
+    if query.chars().any(char::is_uppercase) {
+        return name.find(query).map(|i| (i, i + query.len()));
+    }
+    let lower = name.to_lowercase();
+    let i = lower.find(&query.to_lowercase())?;
+    // lowercasing can change the byte length of some chars, the range is only
+    // exact for the name if it did not
+    if lower.len() == name.len() {
+        Some((i, i + query.len()))
+    } else {
+        Some((0, 0))
     }
 }
 

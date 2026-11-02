@@ -54,12 +54,18 @@ fn draw_tabs(frame: &mut Frame, app: &App, area: Rect) {
         });
     }
     let tab = app.tab();
-    let location = match tab.kind {
-        TabKind::Dir => tab
+    let jump_dir = match &app.mode {
+        Mode::Jump(jump) => Some(jump.dir.and_then(|d| tab.tree.path(d))),
+        _ => None,
+    };
+    let location = match (jump_dir, tab.kind) {
+        (Some(Some(path)), _) => tilde(&path.display().to_string()),
+        (Some(None), _) => "pinned".to_string(),
+        (None, TabKind::Dir) => tab
             .root_path()
             .map(|p| tilde(&p.display().to_string()))
             .unwrap_or_default(),
-        TabKind::Pins => format!("{} pinned", tab.tree.roots().len()),
+        (None, TabKind::Pins) => format!("{} pinned", tab.tree.roots().len()),
     };
     spans.push(Span::raw("  "));
     spans.push(Span::styled(location, Style::new().fg(Color::Blue)));
@@ -70,35 +76,90 @@ fn draw_tree(frame: &mut Frame, app: &mut App, area: Rect) {
     let height = area.height as usize;
     app.page = height;
 
-    let tab = &mut app.tabs[app.active];
-    if tab.items.is_empty() {
-        let text = match tab.kind {
-            TabKind::Pins => "no pinned directories – pin one with b",
-            TabKind::Dir if !tab.filter.query.is_empty() => "nothing matches",
-            TabKind::Dir => "empty",
+    if let Mode::Jump(jump) = &app.mode {
+        // the jump shows one flat level, the real view stays untouched
+        let count = jump.matches.len();
+        let items: Vec<ViewItem> = jump
+            .matches
+            .iter()
+            .enumerate()
+            .map(|(i, h)| ViewItem {
+                handle: *h,
+                depth: 0,
+                guides: Vec::new(),
+                is_last: i + 1 == count,
+            })
+            .collect();
+        let offset = scroll(jump.cursor, 0, items.len(), height);
+        let query = jump.input.text().to_string();
+        let empty = if query.is_empty() {
+            "empty"
+        } else {
+            "no match"
         };
-        frame.render_widget(Paragraph::new(text).dim().italic(), area);
+        draw_items(
+            frame,
+            app,
+            area,
+            &items,
+            jump.cursor,
+            offset,
+            Some(&query),
+            empty,
+        );
         return;
     }
 
-    // keep the cursor inside the window, with some context around it
-    let so = SCROLL_OFF.min(height.saturating_sub(1) / 2);
-    if tab.cursor < tab.offset + so {
-        tab.offset = tab.cursor.saturating_sub(so);
-    } else if tab.cursor + so >= tab.offset + height {
-        tab.offset = tab.cursor + so + 1 - height;
-    }
-    tab.offset = tab.offset.min(tab.items.len().saturating_sub(height));
-
+    let tab = &mut app.tabs[app.active];
+    tab.offset = scroll(tab.cursor, tab.offset, tab.items.len(), height);
+    let empty = match tab.kind {
+        TabKind::Pins => "no pinned directories – pin one with b",
+        TabKind::Dir if !tab.filter.query.is_empty() => "nothing matches",
+        TabKind::Dir => "empty",
+    };
     let tab = &app.tabs[app.active];
-    let visible = &tab.items[tab.offset..(tab.offset + height).min(tab.items.len())];
+    draw_items(
+        frame, app, area, &tab.items, tab.cursor, tab.offset, None, empty,
+    );
+}
+
+/// new scroll offset that keeps the cursor inside the window, with some
+/// context around it
+fn scroll(cursor: usize, offset: usize, len: usize, height: usize) -> usize {
+    let so = SCROLL_OFF.min(height.saturating_sub(1) / 2);
+    let mut offset = offset;
+    if cursor < offset + so {
+        offset = cursor.saturating_sub(so);
+    } else if cursor + so >= offset + height {
+        offset = cursor + so + 1 - height;
+    }
+    offset.min(len.saturating_sub(height))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_items(
+    frame: &mut Frame,
+    app: &App,
+    area: Rect,
+    items: &[ViewItem],
+    cursor: usize,
+    offset: usize,
+    highlight: Option<&str>,
+    empty: &str,
+) {
+    if items.is_empty() {
+        frame.render_widget(Paragraph::new(empty.to_string()).dim().italic(), area);
+        return;
+    }
+    let tab = app.tab();
+    let height = area.height as usize;
+    let visible = &items[offset..(offset + height).min(items.len())];
     let rows: Vec<Row> = visible
         .iter()
         .enumerate()
         .filter_map(|(i, item)| {
             let node = tab.tree.get(item.handle)?;
-            let selected = tab.offset + i == tab.cursor;
-            Some(row(app, item, node, selected))
+            Some(row(app, item, node, offset + i == cursor, highlight))
         })
         .collect();
 
@@ -116,7 +177,13 @@ fn draw_tree(frame: &mut Frame, app: &mut App, area: Rect) {
     frame.render_widget(table, area);
 }
 
-fn row<'a>(app: &App, item: &ViewItem, node: &'a Node, selected: bool) -> Row<'a> {
+fn row<'a>(
+    app: &App,
+    item: &ViewItem,
+    node: &'a Node,
+    selected: bool,
+    highlight: Option<&str>,
+) -> Row<'a> {
     let marked = app.marked.contains(&node.path);
     let clip = app
         .clipboard
@@ -145,10 +212,16 @@ fn row<'a>(app: &App, item: &ViewItem, node: &'a Node, selected: bool) -> Row<'a
         style = style.add_modifier(Modifier::DIM | Modifier::ITALIC);
     }
 
-    let mut name = vec![
-        Span::styled(guides, Style::new().fg(Color::DarkGray)),
-        Span::styled(node.name.clone(), style),
-    ];
+    let mut name = vec![Span::styled(guides, Style::new().fg(Color::DarkGray))];
+    match highlight.and_then(|q| crate::view::match_range(q, &node.name)) {
+        Some((start, end)) if end > start => {
+            let hl = style.fg(Color::Yellow).underlined();
+            name.push(Span::styled(node.name[..start].to_string(), style));
+            name.push(Span::styled(node.name[start..end].to_string(), hl));
+            name.push(Span::styled(node.name[end..].to_string(), style));
+        }
+        _ => name.push(Span::styled(node.name.clone(), style)),
+    }
     match &node.kind {
         NodeKind::Dir => name.push(Span::styled("/", style)),
         NodeKind::Symlink { target, .. } => name.push(Span::styled(
@@ -239,6 +312,20 @@ fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
             ))
         }
         Mode::Menu(menu) => menu_line(app, *menu),
+        Mode::Jump(jump) => {
+            let label = "jump ▸ ";
+            let text = jump.input.text();
+            let x = area.x + (label.chars().count() + text.chars().count()) as u16;
+            frame.set_cursor_position((x.min(area.right().saturating_sub(1)), area.y));
+            Line::from(vec![
+                Span::styled(label, Style::new().fg(Color::Yellow).bold()),
+                Span::raw(text.to_string()),
+                Span::styled(
+                    "   enter open · bksp up · esc stay here",
+                    Style::new().dim(),
+                ),
+            ])
+        }
         Mode::Normal | Mode::Help(_) => match &app.status {
             Some(status) if status.error => Line::from(Span::styled(
                 status.text.clone(),
@@ -278,14 +365,15 @@ fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
         format!("sort: {}", tab.sort.describe()),
         Style::new().dim(),
     ));
-    right.push(Span::styled(
-        format!(
+    let position = match &app.mode {
+        Mode::Jump(jump) => format!("{} matches", jump.matches.len()),
+        _ => format!(
             "{}/{}",
             (tab.cursor + 1).min(tab.items.len()),
             tab.items.len()
         ),
-        Style::new().dim(),
-    ));
+    };
+    right.push(Span::styled(position, Style::new().dim()));
 
     let mut spans = Vec::new();
     for (i, span) in right.into_iter().enumerate() {

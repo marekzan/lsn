@@ -89,6 +89,7 @@ pub const NORMAL: &[Binding] = &[
     b(&[k('a')], Action::Create, "new file (dir/ for dir)"),
     b(&[k('c')], Action::Chmod, "chmod"),
     b(&[k('/')], Action::Search, "search"),
+    b(&[k(';')], Action::Jump, "jump (type, auto-enter)"),
     b(&[k('f')], Action::FilterMenu, "filter menu"),
     b(&[k('s')], Action::SortMenu, "sort menu"),
     b(&[k('.')], Action::ToggleHidden, "toggle hidden"),

@@ -42,6 +42,8 @@ pub enum Action {
 
     // view
     Search,
+    /// type to narrow the current level, jump into single matches
+    Jump,
     FilterMenu,
     SortMenu,
     ToggleHidden,
