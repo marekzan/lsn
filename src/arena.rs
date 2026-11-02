@@ -120,6 +120,17 @@ impl<T> Arena<T> {
             _ => return None,
         }
     }
+
+    /// number of occupied slots
+    pub fn len(&self) -> usize {
+        self.count as usize
+    }
+}
+
+impl<T> Default for Arena<T> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(test)]
@@ -212,7 +223,7 @@ mod tests {
 #[cfg(test)]
 mod proptest {
 
-    use crate::{Arena, Handle};
+    use crate::arena::{Arena, Handle};
     use proptest::prelude::*;
     use std::collections::HashMap;
 

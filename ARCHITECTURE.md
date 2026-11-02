@@ -1,78 +1,73 @@
-  # Architecture
+# Architecture
 
-[main.rs]
-   │
-   │ 1. Parse CLI Args
-   ▼
-[cli.rs]
-   │
-   │ 2. Create App instance
-   ▼
-[app.rs: App::new]
-   │
-   │ 3. Initialize Terminal, Components, and Action channel
-   ▼
-[app.rs: App::run]
-   │
-   │ 4. Enter terminal raw mode and start event loop
-   ▼
-[terminal/mod.rs & events.rs]
-   │
-   │ 5. Listen for terminal events (Tick, Render, Inputs, Resize)
-   │    in a separate thread.
-   │
-   │ 6. Send TermEvent to App
-   ▼
-[app.rs: handle_terminal_events]
-   │
-   │ 7. Receive TermEvent
-   │
-   ├───► 8a. Map TermEvent to GlobalAction (e.g., Tick, Quit)
-   │ │
-   ├───► 8b. Pass TermEvent to Components
-   │ │
-   ├───► 8c. Map key events to actions
-   │ │
-   │ │ 9. Components can return a new AppAction
-   │ ▼
-   │ 10. Send AppAction (from 8a, 8c or 9)
-   │     to the action channel
-   ▼
-[Action Channel (tokio::mpsc)]
-   │
-   │ 11. App::handle_actions receives
-   │     AppAction from channel
-   ▼
-[app.rs: handle_actions]
-   │
-   ├───► 12a. Handle GlobalAction (e.g., Quit, Resize, ClearScreen)
-   │ │      If Render action:
-   │ │         └─► [app.rs: render] ───► [ratatui] draws to terminal
-   │ │               │
-   │ │               └─► For each component: [component.draw]
-   │ │
-   │ └─► 12b. Pass AppAction to all components: [component.update]
-   │
-   │ 13. A component's update can return a new AppAction,
-   │     which is sent back to the action channel.
-   │
-   └─────────────────────────────────── Loop to step 11 ───┘
+lsn is split into layers that only depend on the layers below them:
 
-## Explanation of the Data Flow:
+```
+main.rs ─ event loop: draw → wait for key → update (no ticks, only redraws after input)
+  │
+  ├─ term.rs ── terminal setup: inline viewport (default) or alternate screen (--fullscreen)
+  ├─ ui.rs ──── renders App state with ratatui, never mutates the model
+  │
+  └─ app.rs ─── App: tabs, global marks, clipboard, pins, mode (normal/menu/prompt/confirm/help)
+       │         keys ─(keymap.rs)→ Action ─(App::apply)→ state changes
+       │
+       ├─ tab.rs ──── Tab: one FileTree + its view list, cursor, filter and sort
+       ├─ view.rs ─── view-model: flattens the visible part of a tree (filter + sort)
+       ├─ fs/
+       │   ├─ tree.rs  model: FileTree, nodes stored in the Arena, lazy loading, refresh
+       │   ├─ node.rs  Node, NodeKind, Meta
+       │   ├─ ops.rs   copy/move/delete/rename/create/chmod on plain paths
+       │   └─ owner.rs uid/gid → name (cached)
+       └─ arena.rs ── generational arena, stable `Handle`s instead of Box/Rc
+```
 
-1. Initialization: main.rs starts the application. It parses command-line arguments (cli.rs) and creates an App instance.
-2. App Setup: App::new initializes the main components: the Terminal, the UI components, and an mpsc channel for communication via AppAction.
-3. Event Loop: App::run starts the main loop. The Terminal enters raw mode and starts its own thread (terminal/events.rs) to listen for terminal events (key presses, ticks, rendering requests).
-4. Event to Action: When an event occurs in the terminal thread, it is sent to the App as a TermEvent.
-5. Action Dispatch:
-   * app.rs receives the TermEvent.
-   * Simple events like Tick or Quit are directly converted into a GlobalAction.
-   * Keyboard events (KeyEvent) are checked against the configuration in config/mod.rs to find a corresponding GlobalAction.
-   * All events are also passed to the individual UI components, which can in turn generate actions.
-6. Action Processing:
-   * All generated AppActions are sent to the central mpsc channel.
-   * The handle_actions method in app.rs receives the actions from the channel in a loop.
-   * GlobalActions are processed directly by the App (e.g., should_quit = true on Quit).
-   * All actions are forwarded to the update method of each component to update their internal state.
-7. Rendering: When a GlobalAction::Render is received, the App calls the draw method of each component, which then draws to the screen using ratatui.
-8. Loop: This process repeats continuously until the Quit action terminates the application.
+## Model, view-model, view
+
+- **Model (`FileTree`)**: the truth about the file system. Nodes live in an
+  `Arena<Node>` and link to each other with `Handle`s (`parent`, `children`).
+  Directories are read lazily the first time they are opened. `refresh`
+  re-reads a directory and keeps the handles of entries that still exist, so
+  expanded state and cursor survive. Children keep the order the OS gives
+  (sorted by path). The model never changes just because the user sorts or
+  filters.
+- **View-model (`view::build` → `Vec<ViewItem>`)**: the flat list of visible
+  nodes with their depth and tree guides. Filtering and sorting happen here.
+  Cursor movement, scrolling and "node under cursor" are O(1) on this list.
+  It is rebuilt lazily (`Tab::stale`) after something changed.
+- **View (`ui.rs`)**: reads `App` and draws only the visible slice of the list.
+
+## Global vs. per tab state
+
+| state                       | where       | why                                   |
+|-----------------------------|-------------|---------------------------------------|
+| tree, cursor, filter, sort  | `Tab`       | every tab looks at its own directory  |
+| marks (`BTreeSet<PathBuf>`) | `App`       | mark in several tabs, act on all      |
+| clipboard                   | `App`       | copy in one tab, paste in another     |
+| pins                        | `App`/disk  | shared, stored in `$XDG_DATA_HOME/lsn/pins` |
+
+Marks and the clipboard use paths, not handles. Handles are only valid inside
+one tree, while paths stay valid across tabs and trees.
+
+After a file operation, `App::after_change` refreshes the affected directories
+in **every** tab that has them loaded, so all tabs show the change at once.
+
+## Filters
+
+A node is visible if it matches all active filters. A directory that doesn't
+match itself is still shown as context when one of its descendants matches.
+Search and "only marked" also look into collapsed directories, so matches deep
+in the tree show up with their parents. When a search starts, the tab loads up
+to 20 000 not yet read entries breadth first, so files in folders you never
+opened are found too.
+
+## Inline mode and stdout
+
+The UI always draws to the terminal. If stdout is not a tty (`cd "$(lsn)"`),
+`term.rs` points fd 1 at `/dev/tty` while the UI runs. Picked paths are printed
+to the real stdout only after the terminal was restored.
+
+## Keys
+
+All keys are defined once in `keymap.rs` (`NORMAL`, `FILTER_MENU`,
+`SORT_MENU`). Both the key handling and the help screen (`?`) use these tables,
+which is also where a config file can later plug in.

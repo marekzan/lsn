@@ -1,25 +1,28 @@
+use std::path::PathBuf;
+
 use clap::Parser;
 
-use crate::config::{get_config_dir, get_data_dir};
-
+/// Explore files in the terminal via a tree view.
+///
+/// lsn runs inline below your prompt by default. Picked paths (`enter` on a
+/// file, `o`, `O`) are printed to stdout, so it can be used in scripts:
+///
+///     cd "$(lsn ~/projects)"      # press O on a directory
+///     vim $(lsn)                  # mark files with space, press o
 #[derive(Parser, Debug)]
-#[command(author, version = version(), about)]
+#[command(author, version = VERSION_MESSAGE, about, verbatim_doc_comment)]
 pub struct Cli {
-    /// Tick rate, i.e. number of ticks per second
-    #[arg(long, value_name = "FLOAT", default_value_t = 4.0)]
-    pub tick_rate: f64,
+    /// Directories to open, one tab each
+    #[arg(value_name = "DIR", default_value = ".")]
+    pub dirs: Vec<PathBuf>,
 
-    /// Frame rate, i.e. number of frames per second
-    #[arg(long, value_name = "FLOAT", default_value_t = 60.0)]
-    pub frame_rate: f64,
-
-    /// Use the whole terminal as viewport
-    #[arg(short, long, default_value_t = false)]
+    /// Use the whole terminal (alternate screen) instead of running inline
+    #[arg(short, long)]
     pub fullscreen: bool,
 
-    /// Use the whole terminal as viewport
-    #[arg(short, long, default_value_t = 50)]
-    pub inline_height: u16,
+    /// Height of the inline viewport in lines, capped to the terminal height
+    #[arg(short = 'H', long, value_name = "LINES", default_value_t = 20)]
+    pub height: u16,
 }
 
 const VERSION_MESSAGE: &str = concat!(
@@ -30,21 +33,3 @@ const VERSION_MESSAGE: &str = concat!(
     env!("VERGEN_BUILD_DATE"),
     ")"
 );
-
-pub fn version() -> String {
-    let author = clap::crate_authors!();
-
-    // let current_exe_path = PathBuf::from(clap::crate_name!()).display().to_string();
-    let config_dir_path = get_config_dir().display().to_string();
-    let data_dir_path = get_data_dir().display().to_string();
-
-    format!(
-        "\
-{VERSION_MESSAGE}
-
-Authors: {author}
-
-Config directory: {config_dir_path}
-Data directory: {data_dir_path}"
-    )
-}

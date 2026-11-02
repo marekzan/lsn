@@ -1,35 +1,80 @@
-use serde::{Deserialize, Serialize};
-use strum::Display;
+use crate::view::SortBy;
 
-use crate::components::home::HomeAction;
-
-#[derive(Debug, Clone, PartialEq, Eq, Display, Serialize, Deserialize)]
-pub enum AppAction {
-    Tick,
-    Render,
-    Resize(u16, u16),
-    Suspend,
-    Resume,
-    Quit,
-    ClearScreen,
-    Error(String),
-    Help,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// everything the user can do in normal mode.
+///
+/// keys are mapped to actions in `keymap.rs`, the app only knows actions.
+/// this keeps the key handling configurable and testable without a terminal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
-    App(AppAction),
-    Home(HomeAction),
-}
+    // navigation
+    Up,
+    Down,
+    Top,
+    Bottom,
+    HalfPageUp,
+    HalfPageDown,
+    /// expand a directory or move into its first child
+    Expand,
+    /// collapse a directory or move to its parent
+    Collapse,
+    /// toggle a directory, pick a file
+    Open,
+    CollapseAll,
+    /// make the parent of the root the new root (`cd ..`)
+    RootUp,
+    /// make the directory under the cursor the new root (`cd dir`)
+    RootDown,
+    RootHome,
 
-impl From<AppAction> for Action {
-    fn from(action: AppAction) -> Self {
-        Action::App(action)
-    }
-}
+    // marks
+    ToggleMark,
+    InvertMarks,
+    ClearMarks,
 
-impl From<HomeAction> for Action {
-    fn from(action: HomeAction) -> Self {
-        Action::Home(action)
-    }
+    // file operations
+    Yank,
+    Cut,
+    Paste,
+    Delete,
+    Rename,
+    Create,
+    Chmod,
+
+    // view
+    Search,
+    FilterMenu,
+    SortMenu,
+    ToggleHidden,
+    ToggleMeta,
+    Refresh,
+
+    // filter menu
+    ToggleDirs,
+    ToggleFiles,
+    ToggleSymlinks,
+    ToggleOnlyMarked,
+    ResetFilter,
+
+    // sort menu
+    SortBy(SortBy),
+    ToggleDirsFirst,
+    ToggleReverse,
+
+    // tabs
+    NewTab,
+    CloseTab,
+    NextTab,
+    PrevTab,
+    GoToTab(usize),
+    TogglePin,
+    OpenPins,
+
+    // leaving
+    /// print the marked paths (or the path under the cursor) and quit
+    Pick,
+    /// print the directory under the cursor and quit, for `cd "$(lsn)"`
+    PickDir,
+    Help,
+    Escape,
+    Quit,
 }
